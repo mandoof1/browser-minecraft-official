@@ -6,8 +6,10 @@ this repository is a reimplementation of the game.
 
 Target version: **Minecraft 1.12.2** (Java 8, LWJGL 2).
 
-Status: **the game boots and initialises; it does not reach the title screen
-yet.** Details under [Where it stands](#where-it-stands).
+Status: **the game reaches its own title screen and is drawn on screen.**
+Details under [Where it stands](#where-it-stands). Input works on the same
+stack (verified with Minecraft 1.2.5 on this same origin), and gameplay on
+1.12.2 is the part still being finished.
 
 The sibling project `../browser-minecraft` is a different approach (EaglercraftX,
 a pre-existing browser port) and is fully playable/deployed. This one is the
@@ -175,6 +177,25 @@ makes it out of `bib.aq()` and kills the game with
 only to report model cycles - is neutralised in the same patched jar copy.
 After it, the client gets all the way through model loading.
 
+**9. CheerpJ realizes AWT windows, not the X11 window LWJGL asks for.** The
+display element sat at `Graphics system is initializing` forever while GL itself
+worked (`Display.create` returned, `Display.update` swapped, `renderer=GL4ES
+wrapper`). The fix is to give LWJGL an AWT canvas parent instead - see
+[How the window got there](#how-the-window-got-there) for the bisection that
+proved it. `Display.setResizable(boolean)` is replaced with a call to
+`com.webmc.AwtParent` (in `awtfix/`), which is inside the patched LWJGL jar
+because it has to be loadable next to `Display`.
+
+**10. `AssetIndex.hasResource` answers with `java.io.File.isFile()`.** Under
+CheerpJ every `File.isFile()` on an `/app/` path goes out through the async
+filesystem layer and back, and the client makes thousands of them while it loads
+`sounds.json` and models - `tools/jstack2.mjs` spent 5 of 8 samples inside that
+one call. The index is a `HashMap` from resource path to the object file, so it
+already knows: `cee.b(nf)` is rewritten to `return a(nf) != null`. Checked
+against an unsigned copy of the unpatched jar on a desktop JVM - same answers.
+`?cee=0` selects the jar without that patch (`build/client-1.12.2-webmc-nocee.jar`)
+so the two can be timed against each other.
+
 ## Where it stands
 
 Working, with evidence from the unmodified client's own log:
@@ -228,10 +249,51 @@ client's fault: `probe/webmc/GlProbe2.java` calls `Display.setDisplayMode` and
 `Display.create(PixelFormat)` directly and they succeed
 (`renderer=GL4ES wrapper`, `GL_DEPTH_BITS=24`), and CheerpJ does fetch
 `x11.wasm`, `cheerpj-awt.jar` and the font/fontconfig data from its CDN. The
-GL context exists; the window that should carry it does not. Note the same
-`cheerpjNC cjStatus` classes come from CheerpJ's community-edition watermark
-(bit `524288` in its option mask), so the overlay itself is not the fault - the
-missing canvas is.
+GL context exists; the window that should carry it does not.
+
+### How the window got there
+
+That last paragraph was the blocker, and it took a bisection against Leaning
+Technologies' own working demo to find. The chain of evidence:
+
+1. `tools/bcrun.mjs` drives `browsercraft.cheerpj.com` (CheerpJ 4.3, LWJGL 2.9.3,
+   gl4es, Minecraft 1.2.5). Its DOM gains `div.cjWindow cjBordered` containing
+   `canvas.cjSwapped`. Ours never gained a `.cjWindow` at all.
+2. `web/bc.html` + `web/app/bc.js` transcribe Browsercraft's `cheerpjInit`
+   options - including its whole `preloadResources` table - onto **our** hosting
+   and get the same window. So our hosting and init were never the problem.
+3. `?mc=1.2.5` runs Minecraft 1.2.5 through **our** boot path and gets the same
+   window. So the difference is the game, not the page.
+4. `probe/webmc/GlProbe4.java` repeats Minecraft 1.2.5's display calls call for
+   call (`setDisplayMode(854x480)` -> `setTitle` -> `create(withDepthBits(24))`)
+   and gets **no** window. So it is not the display calls either.
+5. `probe/webmc/GlProbe6.java` makes a plain `java.awt.Frame` visible and **that
+   does** produce `div.cjWindow` + `canvas.cjSwapped`. CheerpJ realizes AWT
+   peers as DOM; the `cjWindow`/`cjSwapped` classes live in
+   `com/leaningtech/cheerpj/CheerpJWindowPeer.class` and `CheerpJRasterPeer.class`
+   inside `cheerpj-awt.jar`.
+6. `probe/webmc/GlProbe7.java` calls `Display.setParent(Canvas)` and the whole
+   window appears - the same DOM shape the demo gets. CheerpJ's wasm `liblwjgl`
+   implements the AWTGL entry points (`Java_org_lwjgl_opengl_AWTSurfaceLock_*`,
+   `LinuxAWTGLCanvasPeerInfo_nInitHandle`, `LinuxDisplay_nLockAWT`), so the AWT
+   parent path is real; it is the plain X11 route that never realizes.
+
+So the display is parented to an AWT canvas. The hook is a body replacement on
+`Display.setResizable(boolean)`: Minecraft 1.12.2 calls it immediately before
+`setTitle`/`create`, which is exactly the right moment, and it is reachable with
+one method-body patch instead of bytecode surgery inside `create()`.
+`awtfix/com/webmc/AwtParent.java` is the helper; `--static` in
+`tools/patchclass.py` appends the two constant pool entries and rewrites the body.
+
+The result, from a real browser against the local server:
+
+```
+[19:44:06] [Client thread/INFO]: [STDOUT]: [webmc] AwtParent: LWJGL display parented to an AWT canvas 854x480
+```
+
+and the screenshot shows Mojang's own splash, then Mojang's own main menu:
+Singleplayer / Multiplayer / Minecraft Realms / Options / Quit Game, the "Deja Vu"
+splash text, "Minecraft 1.12.2" and "Copyright Mojang AB. Do not distribute!".
 
 That is the next thing to attack: get CheerpJ to realize a display for an
 LWJGL 2 window, then look at the shader failures (gl4es's GLSL rejects

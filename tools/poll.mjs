@@ -7,8 +7,8 @@ const puppeteer = require('puppeteer');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PORT = process.env.PORT || '8960';
 const Q5 = process.env.QS || '';
-const srv = spawn('python3', ['tools/serve.py'], { env: { ...process.env, PORT } });
-await sleep(1200);
+const srv = process.env.EXTERNAL ? null : spawn('python3', ['tools/serve.py'], { env: { ...process.env, PORT } });
+if (srv) await sleep(1200);
 const b = await puppeteer.launch({ executablePath: '/usr/bin/brave', headless: true, protocolTimeout: 900000,
   args: ['--no-sandbox','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader','--window-size=1200,800'] });
 try {
@@ -40,4 +40,4 @@ try {
   }
   fs.mkdirSync('shots', { recursive: true });
   await p.screenshot({ path: 'shots/poll-final.png' });
-} finally { await b.close(); srv.kill(); }
+} finally { await b.close(); srv && srv.kill(); }

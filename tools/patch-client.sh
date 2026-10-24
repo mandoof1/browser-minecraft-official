@@ -27,6 +27,7 @@ V="data/vanilla/$VER"
 [ -f "$V/client.jar" ] || { echo "no $V/client.jar - run tools/get-vanilla.py $VER first"; exit 1; }
 mkdir -p build
 python3 tools/patchclass.py "$V/client.jar" build/client.tmp.jar c.class a "(I)I" --const0
+python3 tools/patchclass.py build/client.tmp.jar "build/client-$VER-webmc-nocee.jar" bvu.class b "(Ljava/util/Map;)V" --const0
 python3 tools/patchclass.py build/client.tmp.jar build/client.tmp2.jar cee.class b "(Lnf;)Z" --nonnull cee a "(Lnf;)Ljava/io/File;"
 python3 tools/patchclass.py build/client.tmp2.jar "build/client-$VER-webmc.jar" bvu.class b "(Ljava/util/Map;)V" --const0
 rm -f build/client.tmp2.jar

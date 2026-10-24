@@ -76,7 +76,9 @@ window.mcBoot = (function () {
    * it, visible again. Turn it off with ?crashfix=0. */
   async function crashfixJar(ver) {
     if (params.get('crashfix') === '0') return null;
-    const p = '/app/client-' + ver + '-webmc.jar';
+    // ?cee=0 selects the same jar without the AssetIndex.hasResource patch, so
+    // the two can be timed against each other.
+    const p = '/app/client-' + ver + '-webmc' + (params.get('cee') === '0' ? '-nocee' : '') + '.jar';
     try { return (await fetch(p, { method: 'HEAD' })).ok ? p : null; } catch (e) { return null; }
   }
 

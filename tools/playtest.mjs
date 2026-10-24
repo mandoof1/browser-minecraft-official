@@ -1,106 +1,109 @@
-// playtest.mjs - drive the real client with real browser input events.
+// playtest.mjs - drive the real client with real browser input events and
+// answer one question per step: did the screen change?
 //
-// The title screen is drawn, so the question is whether CheerpJ's DOM -> AWT ->
-// LWJGL input path reaches Mojang. Each step screenshots, because the only
-// honest evidence that a click landed is the screen changing.
+// Screenshots are the evidence. Sampling the WebGL canvas with drawImage is not
+// usable (no preserveDrawingBuffer, so the copy is the same cleared buffer no
+// matter what the game drew), but a screenshot captures the composited page.
+//
+//   QS="mc=1.2.5" WAIT=60000 CLICKS="427,257,Singleplayer" node tools/playtest.mjs
+//
+// Coordinates are canvas-relative, which is how Minecraft lays its GUI out: the
+// canvas is the framebuffer, so canvas pixels are GUI pixels.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const puppeteer = require('puppeteer');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const PORT = Number(process.env.PORT || 9130);
-const server = spawn('python3', ['tools/serve.py'], { env: { ...process.env, PORT } });
+const PORT = Number(process.env.PORT || 9210);
+const QS = process.env.QS || 'version=1.12.2';
+const TAG = process.env.TAG || 'x';
+const srv = process.env.EXTERNAL ? null : spawn('python3', ['tools/serve.py'], { env: { ...process.env, PORT } });
+if (srv) await sleep(1200);
+let browser;
 const shot = async (p, n) => {
   fs.mkdirSync('shots', { recursive: true });
-  await p.screenshot({ path: `shots/play-${String(n).padStart(2, '0')}-${process.env.TAG || 'x'}.png` });
-  console.log(`  shot play-${String(n).padStart(2, '0')}-${process.env.TAG || 'x'}.png`);
+  const buf = await p.screenshot({ encoding: 'binary' }).catch(() => null);
+  if (!buf) return null;
+  fs.writeFileSync(`shots/play-${String(n).padStart(2, '0')}-${TAG}.png`, buf);
+  return crypto.createHash('sha1').update(buf).digest('hex');
 };
-let browser;
 try {
-  for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break; } catch {} await sleep(250); }
   browser = await puppeteer.launch({ executablePath: '/usr/bin/brave', headless: true, protocolTimeout: 900000,
     args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--window-size=1200,800'] });
   const page = await browser.newPage();
   await page.setViewport({ width: 1200, height: 800 });
   const con = [];
   page.on('console', m => { con.push(m.text()); if (con.length > 8000) con.splice(0, 4000); });
-  await page.goto(`http://127.0.0.1:${PORT}/?version=1.12.2`, { waitUntil: 'domcontentloaded' }).catch(() => {});
-
-  // Wait for the game to draw something other than the Mojang splash. The
-  // splash is drawn long before the menu, so "non-black" is not enough: the
-  // signal is the frame *changing* away from the first stable frame.
-  const WAIT = Number(process.env.TITLE_WAIT || 480000);
-  console.log('waiting for the title screen (up to ' + (WAIT / 1000) + 's)');
   const t0 = Date.now();
-  const sample = () => page.evaluate(() => {
-    const cs = [...document.querySelectorAll('canvas')];
-    const c = cs[cs.length - 1];
-    if (!c) return null;
-    const off = document.createElement('canvas');
-    off.width = off.height = 48;
-    const g = off.getContext('2d');
-    g.drawImage(c, 0, 0, 48, 48);
-    const d = g.getImageData(0, 0, 48, 48).data;
-    let h = 0, nonBlack = 0;
-    for (let i = 0; i < d.length; i += 4) {
-      if (d[i] + d[i + 1] + d[i + 2] > 60) nonBlack++;
-      h = (h * 31 + d[i] * 3 + d[i + 1] * 5 + d[i + 2] * 7) | 0;
-    }
-    return { h, nonBlack };
-  }).catch(() => null);
+  const at = () => Math.round((Date.now() - t0) / 1000);
+  await page.goto(`http://127.0.0.1:${PORT}/?${QS}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
-  let base = null, stable = 0, ready = false;
-  while (Date.now() - t0 < WAIT) {
-    const st = sample();
-    if (st && st.nonBlack > 200) {
-      if (base === null) { base = st.h; stable = 1; }
-      else if (st.h !== base) { console.log(`  frame changed at t+${Math.round((Date.now() - t0) / 1000)}s`); ready = true; break; }
-      else if (++stable > 6) { base = st.h; }
-    }
-    await sleep(4000);
+  while (Date.now() - t0 < Number(process.env.WINDOW_WAIT || 120000)) {
+    if (await page.evaluate(() => document.querySelectorAll('.cjWindow canvas').length > 0).catch(() => false)) break;
+    await sleep(3000);
   }
-  console.log(ready ? 'title screen reached' : 'NO frame change within the wait');
-  await sleep(6000);
-  await shot(page, 0);
+  console.log(`window at t+${at()}s`);
 
-  // Click helper: canvas-relative coordinates, which is how Minecraft lays out
-  // its GUI (the canvas is the framebuffer, 1:1 with GUI coordinates at scale 1).
-  const click = async (x, y, label) => {
-    const box = await page.evaluate(() => {
-      const cs = [...document.querySelectorAll('canvas')];
-      const c = cs[cs.length - 1];
-      const r = c.getBoundingClientRect();
-      return { x: r.x, y: r.y, w: r.width, h: r.height, cw: c.width, ch: c.height };
-    });
-    const sx = box.w / box.cw, sy = box.h / box.ch;
-    console.log(`click ${label} at canvas(${x},${y}) -> page(${Math.round(box.x + x * sx)},${Math.round(box.y + y * sy)}) box=${box.cw}x${box.ch}`);
-    await page.mouse.move(box.x + x * sx, box.y + y * sy);
-    await sleep(400);
-    await page.mouse.down(); await sleep(120); await page.mouse.up();
-    await sleep(2500);
-  };
+  // Mojang's own splash sits perfectly still for minutes before the menu
+  // replaces it, so "the frame changed" is a reliable marker for the menu being
+  // up. The baseline has to be taken after the splash settles, not the instant
+  // the window appears, or the window-manager animation counts as a change.
+  if (process.env.WAIT_FOR_TITLE) {
+    const crypto = require('node:crypto');
+    let prev = null, repeats = 0, base = null;
+    while (Date.now() - t0 < Number(process.env.TITLE_WAIT || 600000)) {
+      const buf = await page.screenshot({ encoding: 'binary' }).catch(() => null);
+      if (!buf) { await sleep(5000); continue; }
+      const h = crypto.createHash('sha1').update(buf).digest('hex');
+      repeats = h === prev ? repeats + 1 : 0;
+      prev = h;
+      if (base === null) {
+        if (repeats >= 3) { base = h; console.log(`  splash steady at t+${at()}s`); }
+      } else if (h !== base) { console.log(`  title reached at t+${at()}s`); break; }
+      await sleep(5000);
+    }
+  }
+  await sleep(Number(process.env.WELCOME_WAIT || 60000));
+  console.log(`settled at t+${at()}s`);
 
-  const key = async (k, label) => {
-    console.log(`key ${label || k}`);
-    await page.keyboard.down(k); await sleep(300); await page.keyboard.up(k);
-    await sleep(1500);
-  };
+  const rect = () => page.evaluate(() => {
+    const cs = [...document.querySelectorAll('canvas')];
+    // The game canvas is the biggest one; the window chrome has its own.
+    const c = cs.sort((a, b) => b.width * b.height - a.width * a.height)[0];
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height, cw: c.width, ch: c.height };
+  });
 
-  const steps = (process.env.STEPS || 'single,newworld,confirm').split(',');
-  let n = 1;
+  let n = 0;
+  let before = await shot(page, n++);
+  const steps = (process.env.CLICKS || '').split(';').filter(Boolean);
   for (const s of steps) {
-    if (s === 'single') await click(427, 257, 'Singleplayer');
-    if (s === 'newworld') await click(427, 440, 'Create New World');
-    if (s === 'confirm') await click(427, 340, 'Create New World (confirm)');
-    if (s === 'done') await click(427, 440, 'Done');
-    if (s === 'w') await key('KeyW', 'walk forward');
-    if (s === 'look') { const b = await page.evaluate(() => { const cs = [...document.querySelectorAll('canvas')]; const c = cs[cs.length - 1]; const r = c.getBoundingClientRect(); return r; });
-      await page.mouse.move(b.x + 400, b.y + 240); await page.mouse.down(); await sleep(200); await page.mouse.up();
-      await page.mouse.move(b.x + 520, b.y + 260, { steps: 8 }); await sleep(1500); console.log('look'); }
-    if (s === 'mine') { await page.mouse.down(); await sleep(1200); await page.mouse.up(); console.log('mine'); await sleep(2000); }
-    await shot(page, n++);
+    const [xs, ys, label] = s.split(',');
+    const b = await rect();
+    if (!b) { console.log('no canvas'); break; }
+    const x = b.x + Number(xs) * (b.w / b.cw), y = b.y + Number(ys) * (b.h / b.ch);
+    console.log(`t+${at()}s click ${label} canvas(${xs},${ys}) -> page(${Math.round(x)},${Math.round(y)}) canvas=${b.cw}x${b.ch}`);
+    await page.mouse.move(x, y); await sleep(500);
+    await page.mouse.down(); await sleep(150); await page.mouse.up();
+    await sleep(Number(process.env.AFTER_CLICK || 4000));
+    const after = await shot(page, n++);
+    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after ${label}`);
+    before = after;
+  }
+
+  for (const k of (process.env.KEYS || '').split(',').filter(Boolean)) {
+    const b = await rect();
+    if (b) await page.mouse.move(b.x + b.w / 2, b.y + b.h / 2);
+    console.log(`t+${at()}s key ${k}`);
+    await page.keyboard.down(k); await sleep(600); await page.keyboard.up(k);
+    await sleep(2500);
+    const after = await shot(page, n++);
+    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after key ${k}`);
+    before = after;
   }
   fs.writeFileSync('/tmp/playtest-console.log', con.join('\n'));
-  console.log('console written to /tmp/playtest-console.log (' + con.length + ' lines)');
-} finally { try { await browser?.close(); } catch {} server.kill('SIGTERM'); }
+  console.log(`console: /tmp/playtest-console.log (${con.length} lines)`);
+} finally { try { await browser?.close(); } catch {} srv && srv.kill(); }
