@@ -59,7 +59,10 @@ for a, b in rows:
     if s is not None:
         runs.append((s, p))
     for u, v in runs:
-        if v - u < 60:
+        # A GuiButton is 20 GUI units tall, so at the scales this runs at the
+        # face is 30-45 px; anything much bigger is the panorama or a text area
+        # that happens to be gray.
+        if v - u < 60 or v - u > 430 or b - a < 15 or b - a > 60:
             continue
         out.append(((u + v) // 2, (a + b) // 2, v - u + 1, b - a + 1))
 

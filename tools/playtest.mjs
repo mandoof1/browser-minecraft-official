@@ -223,6 +223,19 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'closewin') {
+        // CheerpJ draws a window manager close box in the title bar. Closing the
+        // AWT frame is what makes Display.isCloseRequested() true, which is how
+        // Minecraft exits normally - and a normal exit is what lets the launcher
+        // print the game directory afterwards.
+        const b = await rect();
+        if (b) {
+          const x = b.x + b.w - 8, y = b.y + 10;
+          console.log(`t+${at()}s closewin -> page(${Math.round(x)},${Math.round(y)})`);
+          await page.mouse.move(x, y); await sleep(400);
+          await page.mouse.down(); await sleep(150); await page.mouse.up();
+        }
+      }
       else if (kind === 'clickfrac') {
         // fraction of the canvas box, for things that are not buttons (the
         // world-list row) and that move when the window is a different size
