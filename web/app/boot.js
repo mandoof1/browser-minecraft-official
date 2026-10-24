@@ -78,7 +78,13 @@ window.mcBoot = (function () {
     phase('plan', plan.classpath.length + ' jars, ' + plan.assetObjects + ' assets, java ' + plan.javaMajor);
 
     phase('cheerpj');
-    await loadScript('https://cjrtnc.leaningtech.com/4.3/loader.js');
+    // The loader otherwise derives the runtime location by parsing the stack of
+    // a thrown Error to find its own script URL. On a deployed site that guess
+    // can come out as the page origin, and CheerpJ then asks *us* for
+    // /cj3n8.wasm. The loader checks this global first, so pin it.
+    const CJ = 'https://cjrtnc.leaningtech.com/4.3';
+    self.cj3LoaderPath = CJ;
+    await loadScript(CJ + '/loader.js');
     if (typeof cheerpjInit !== 'function') throw new Error('CheerpJ loader did not expose cheerpjInit');
 
     const javaMajor = params.get('java') || (Number(plan.javaMajor) >= 17 ? 17 : 8);
