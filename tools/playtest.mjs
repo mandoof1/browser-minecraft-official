@@ -223,13 +223,27 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'waitluma') {
+        // The client's own loading screen outlasts the integrated server's
+        // "world loaded" line, so the usable marker is the frame going bright:
+        // sky and terrain, not the dark dirt pan.
+        const target = Number(arg);
+        const w0 = Date.now();
+        let v = 0;
+        while (Date.now() - w0 < 120000) {
+          v = await brightness(page);
+          if (v >= target) break;
+          await sleep(4000);
+        }
+        console.log(`t+${at()}s waitluma ${target} -> ${v}`);
+      }
       else if (kind === 'closewin') {
         // CheerpJ draws a window manager close box in the title bar. Closing the
         // AWT frame is what makes Display.isCloseRequested() true, which is how
         // Minecraft exits normally - and a normal exit is what lets the launcher
         // print the game directory afterwards.
         const b = await rect();
-        if (b) {
+        if (b && b.w > 100 && b.h > 100) {
           const x = b.x + b.w - 8, y = b.y + 10;
           console.log(`t+${at()}s closewin -> page(${Math.round(x)},${Math.round(y)})`);
           await page.mouse.move(x, y); await sleep(400);
