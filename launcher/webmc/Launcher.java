@@ -23,6 +23,7 @@ public final class Launcher {
 	public static void main(String[] argv) throws Exception {
 		System.out.println("[webmc] java=" + System.getProperty("java.version") + " vm=" + System.getProperty("java.vm.name"));
 		System.out.println("[webmc] os.name=" + System.getProperty("os.name") + " os.arch=" + System.getProperty("os.arch"));
+		raiseDirectMemory();
 		System.out.println("[webmc] java.library.path=" + System.getProperty("java.library.path"));
 
 		List<String> args = new ArrayList<String>();
@@ -143,6 +144,36 @@ public final class Launcher {
 		}
 		out.close();
 		System.out.println("[webmc] wrote " + opts + " (" + lines.length + " settings, fboEnabled=false)");
+	}
+
+	/**
+	 * Give the client room for its chunk buffers.
+	 *
+	 * Mojang allocates a direct ByteBuffer per chunk section it builds geometry
+	 * for (ByteBufferUtils.allocateByteBuffer, class bia.c). java.nio.Bits
+	 * refuses past -XX:MaxDirectMemorySize, which defaults to the max heap and
+	 * is read once from the VM at boot - and CheerpJ's max heap is small, so a
+	 * world at render distance 6 dies with "OutOfMemoryError: Direct buffer
+	 * memory" the moment chunk rendering starts. There is no VM flag to pass to
+	 * CheerpJ, so set the field Bits itself uses.
+	 */
+	private static void raiseDirectMemory() {
+		System.out.println("[webmc] heap max=" + Runtime.getRuntime().maxMemory()
+				+ " total=" + Runtime.getRuntime().totalMemory());
+		try {
+			Class<?> bits = Class.forName("java.nio.Bits");
+			java.lang.reflect.Field limit = bits.getDeclaredField("maxDirectMemory");
+			java.lang.reflect.Field set = bits.getDeclaredField("memoryLimitSet");
+			limit.setAccessible(true);
+			set.setAccessible(true);
+			long before = limit.getLong(null);
+			long want = Math.max(512L * 1024 * 1024, Runtime.getRuntime().maxMemory());
+			set.setBoolean(null, true);   // otherwise the VM's own value comes back
+			limit.setLong(null, want);
+			System.out.println("[webmc] maxDirectMemory " + before + " -> " + want);
+		} catch (Throwable t) {
+			System.out.println("[webmc] could not raise direct memory: " + t);
+		}
 	}
 
 	private static void dumpGameLogs(List<String> args) {
