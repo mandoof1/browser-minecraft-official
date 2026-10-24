@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<title>browser-minecraft-official: unmodified Mojang Minecraft in the browser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#111; color:#ddd; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #wrap { display:flex; flex-direction:column; align-items:center; gap:10px; padding:14px; }
+  #bar { display:flex; gap:14px; flex-wrap:wrap; align-items:center; width:min(1180px,100%); }
+  #game { width:min(1180px,100%); height:min(68vh,760px); background:#000; position:relative; overflow:hidden; border:1px solid #262626; }
+  #log { width:min(1180px,100%); white-space:pre-wrap; background:#0b0b0b; border:1px solid #262626; padding:8px; max-height:34vh; overflow:auto; }
+  body.theater #wrap { padding:0; gap:0; }
+  body.theater #log, body.theater small, body.theater #bar, body.theater h1 { display:none; }
+  body.theater #game { width:100vw; height:100vh; border:0; }
+  .k { color:#888; } .ok { color:#7bd88f; } .err { color:#ff7b72; } .dim { color:#666; } .java { color:#c8a24a; }
+  h1 { font-size:15px; margin:4px 0; font-weight:600; }
+  small { color:#777; max-width:min(1180px,100%); }
+  code { color:#bbb; background:#1b1b1b; padding:1px 4px; border-radius:3px; }
+  #stage { color:#888; } #vername { color:#c8a24a; }
+  progress { width:200px; }
+</style>
+</head>
+<body>
+<div id=wrap>
+  <h1 id=title>browser-minecraft-official &middot; <span id=vername>loading Mojang&rsquo;s version list</span></h1>
+  <div id=bar>
+    <span id=stage>boot</span>
+    <progress id=prog max=100 value=0 hidden></progress>
+    <span id=stats class=dim></span>
+  </div>
+  <div id=game></div>
+  <div id=log></div>
+  <small>
+    The game is Mojang&rsquo;s own <code>client.jar</code>, downloaded from Mojang and run
+    <em>unmodified</em> on a WebAssembly JVM (CheerpJ). Nothing here is a decompile or a
+    reimplementation: the browser layer we wrote is the launcher, the classpath, the launch
+    arguments, the asset pipeline and the hosting. Query params:
+    <code>?version=1.12.2</code> &middot; <code>?theater=1</code> &middot;
+    <code>?java=8|17</code> &middot; <code>?log=1</code> (Java console on the page).
+  </small>
+</div>
+<script src="app/telemetry.js"></script>
+<script src="app/boot.js"></script>
+</body>
+</html>

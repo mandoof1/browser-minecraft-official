@@ -1,0 +1,200 @@
+package webmc;
+
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Our launcher, so the game is started exactly the way a desktop launcher
+ * starts it: one classpath, Mojang's own main class, Mojang's own argument
+ * names.
+ *
+ * CheerpJ's cheerpjRunMain(mainClass, classPath) takes no program arguments,
+ * and Mojang's client insists on them (--gameDir, --assetIndex, --assetsDir,
+ * --uuid, --accessToken ...). So this class reads the argument list that
+ * tools/get-vanilla.py wrote, and calls the real main by reflection. Nothing
+ * here knows anything about Minecraft's internals: it is a command line.
+ */
+public final class Launcher {
+
+	public static void main(String[] argv) throws Exception {
+		System.out.println("[webmc] java=" + System.getProperty("java.version") + " vm=" + System.getProperty("java.vm.name"));
+		System.out.println("[webmc] os.name=" + System.getProperty("os.name") + " os.arch=" + System.getProperty("os.arch"));
+		System.out.println("[webmc] java.library.path=" + System.getProperty("java.library.path"));
+
+		List<String> args = new ArrayList<String>();
+		String inline = System.getProperty("mc.args");
+		String argsFile = System.getProperty("mc.argsFile", "/app/mcargs.txt");
+		String text;
+		if (inline != null && inline.length() > 0) {
+			System.out.println("[webmc] args source: property (" + inline.length() + " chars)");
+			text = inline.replace('|', '\n');
+		} else {
+			System.out.println("[webmc] args source: file " + argsFile);
+			byte[] raw = readAll(new FileInputStream(argsFile));
+			System.out.println("[webmc] read " + raw.length + " bytes");
+			text = new String(raw, "UTF-8");
+		}
+		// Split by hand: no regex, no assumptions about the JVM's regexp engine.
+		int n = text.length();
+		int i = 0;
+		while (i < n) {
+			int j = i;
+			while (j < n && text.charAt(j) != '\n' && text.charAt(j) != '\r') {
+				j++;
+			}
+			String line = text.substring(i, j).trim();
+			if (line.length() > 0) {
+				args.add(line);
+			}
+			i = j + 1;
+		}
+		System.out.println("[webmc] " + args.size() + " launch arguments from " + argsFile);
+
+		seedGameOptions(args);
+
+		String mainClass = System.getProperty("mc.mainClass", "net.minecraft.client.main.Main");
+		Class<?> game = Class.forName(mainClass);
+		System.out.println("[webmc] resolved " + game.getName() + " from " + game.getProtectionDomain().getCodeSource().getLocation());
+		Method main = game.getMethod("main", String[].class);
+		System.out.println("[webmc] calling " + mainClass + ".main - this is Mojang's own bytecode");
+		try {
+			main.invoke(null, new Object[] { args.toArray(new String[0]) });
+			System.out.println("[webmc] game main returned");
+		} catch (Throwable t) {
+			// Mojang's client turns failures into a crash report under the game
+			// directory; print what it wrote, because that report names the layer
+			// that actually failed.
+			Throwable c = t;
+			while (c != null) {
+				System.out.println("[webmc] exception: " + c);
+				for (int f = 0; f < Math.min(c.getStackTrace().length, 12); f++) {
+					System.out.println("[webmc]     at " + c.getStackTrace()[f]);
+				}
+				c = c.getCause();
+			}
+			dumpGameLogs(args);
+			throw t;
+		}
+	}
+
+	/**
+	 * Seed Mojang's own options file before the game starts.
+
+	 * fboEnabled:false is the important one, and it is a real Minecraft video
+	 * setting, not a hack: Mojang's client only touches framebuffer objects when
+	 * it is on. The WebAssembly GL shim this port runs on (gl4es, for OpenGL 2.1
+	 * on top of WebGL) reports ARB/EXT_framebuffer_object but its glGenFramebuffers
+	 * path is broken under CheerpJ - the function pointer lookup fails, which
+	 * shows up as an ArrayIndexOutOfBoundsException inside the first FBO call and
+	 * hangs the game inside Framebuffer.createBindFramebuffer. Turning the setting
+	 * off makes Mojang's own code take its no-FBO fallback, which is the same code
+	 * path older and lower-end GPUs took.
+	 *
+	 * Everything else here is also a stock options.txt key.
+	 */
+	private static void seedGameOptions(List<String> args) throws Exception {
+		String gameDir = null;
+		for (int i = 0; i + 1 < args.size(); i++) {
+			if ("--gameDir".equals(args.get(i))) {
+				gameDir = args.get(i + 1);
+			}
+		}
+		if (gameDir == null) {
+			return;
+		}
+		java.io.File dir = new java.io.File(gameDir);
+		dir.mkdirs();
+		java.io.File opts = new java.io.File(dir, "options.txt");
+		if (opts.exists()) {
+			System.out.println("[webmc] options.txt already present (" + opts.length() + " bytes), leaving it alone");
+			return;
+		}
+		String[] lines = new String[] {
+			// keys are exactly as Mojang's own GameSettings parses them
+			"lang:en_us",
+			"fboEnable:false",
+			"useVbo:false",
+			"fancyGraphics:false",
+			"ao:false",
+			"particles:0",
+			"renderDistance:6",
+			"renderClouds:false",
+			"enableVsync:false",
+			"fullscreen:false",
+			"guiScale:2",
+			"fov:0.75",
+			"gamma:1.0",
+			"maxFps:60",
+			"mouseSensitivity:0.5",
+			"snooperEnabled:false",
+		};
+		java.io.PrintWriter out = new java.io.PrintWriter(new java.io.OutputStreamWriter(
+			new java.io.FileOutputStream(opts), "UTF-8"));
+		for (String line : lines) {
+			out.println(line);
+		}
+		out.close();
+		System.out.println("[webmc] wrote " + opts + " (" + lines.length + " settings, fboEnabled=false)");
+	}
+
+	private static void dumpGameLogs(List<String> args) {
+		String gameDir = null;
+		for (int i = 0; i + 1 < args.size(); i++) {
+			if ("--gameDir".equals(args.get(i))) {
+				gameDir = args.get(i + 1);
+			}
+		}
+		if (gameDir == null) {
+			return;
+		}
+		try {
+			java.io.File logs = new java.io.File(gameDir, "logs");
+			java.io.File latest = new java.io.File(logs, "latest.log");
+			if (latest.isFile()) {
+				System.out.println("[webmc] " + latest + " (" + latest.length() + " bytes) tail:");
+				byte[] raw = readAll(new FileInputStream(latest));
+				String[] lines = new String(raw, "UTF-8").split("\n");
+				for (int i = Math.max(0, lines.length - 40); i < lines.length; i++) {
+					System.out.println("[webmc]   | " + lines[i]);
+				}
+			} else {
+				System.out.println("[webmc] no " + latest);
+			}
+			java.io.File reports = new java.io.File(gameDir, "crash-reports");
+			java.io.File[] found = reports.listFiles();
+			if (found != null) {
+				for (int i = 0; i < found.length; i++) {
+					System.out.println("[webmc] crash report: " + found[i].getName() + " (" + found[i].length() + " bytes)");
+				}
+			}
+			java.io.File[] top = new java.io.File(gameDir).listFiles();
+			if (top != null) {
+				StringBuilder sb = new StringBuilder();
+				for (int i = 0; i < top.length; i++) {
+					sb.append(top[i].getName()).append(' ');
+				}
+				System.out.println("[webmc] gameDir contents: " + sb);
+			}
+		} catch (Throwable t) {
+			System.out.println("[webmc] log dump failed: " + t);
+		}
+	}
+
+	private static byte[] readAll(InputStream in) throws Exception {
+		try {
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			byte[] buf = new byte[8192];
+			int n;
+			while ((n = in.read(buf)) > 0) {
+				out.write(buf, 0, n);
+			}
+			return out.toByteArray();
+		} finally {
+			in.close();
+		}
+	}
+}

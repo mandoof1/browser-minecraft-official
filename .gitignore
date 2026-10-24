@@ -1,0 +1,13 @@
+# Mojang's own files: fetched by tools/get-vanilla.py, never redistributed here.
+/data/
+# Reference clones (browsercraft / cheerpj-meta) - build.sh stages what it needs
+# into web/lwjgl, which is committed.
+/vendor/
+/node_modules
+/shots/
+/tools/telemetry.jsonl
+# javac scratch
+/build/classes/
+/build/probeclasses/
+/build/fixclasses/
+__pycache__/

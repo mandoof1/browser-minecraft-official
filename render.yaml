@@ -1,0 +1,16 @@
+# Render service. Not a static site: this port needs Range/206 responses
+# (CheerpJ reads Mojang's jars and assets in chunks), COOP/COEP headers, and a
+# /telemetry endpoint. See tools/serve.py.
+services:
+  - type: web
+    name: browser-minecraft-official
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    # Mojang's client, libraries and assets are fetched at deploy time, not
+    # committed (their EULA does not let us redistribute the game).
+    buildCommand: python3 tools/get-vanilla.py 1.12.2
+    startCommand: python3 tools/serve.py
+    healthCheckPath: /health
+    autoDeployTrigger: commit
