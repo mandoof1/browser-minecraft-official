@@ -183,6 +183,13 @@ public final class Launcher {
 				while (true) {
 					try {
 						File[] found = reports.listFiles();
+						if (found == null) {
+							// CheerpJ's filesystem is asynchronous; say so once, in the
+							// log, rather than swallowing it forever.
+							System.out.println("[webmc] crash-watch: " + reports + " exists="
+									+ reports.exists() + " isDirectory=" + reports.isDirectory()
+									+ " parent=" + new File(reports.getPath()).getParentFile().list().length);
+						}
 						if (found != null) {
 							for (int i = 0; i < found.length; i++) {
 								if (found[i].lastModified() > seen) {
