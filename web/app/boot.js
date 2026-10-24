@@ -138,7 +138,9 @@ window.mcBoot = (function () {
         // CheerpJ's persistent (IndexedDB-backed) filesystem, so saves, resource
         // packs and screenshots survive a reload.
         'webmc.gameDir=/files/minecraft',
-        'webmc.variant=' + (params.get('variant') || 'minimal')
+        'webmc.variant=' + (params.get('variant') || 'minimal'),
+        'webmc.warm=' + (params.get('warm') === '1' ? '1' : '0'),
+        'mc.version=' + ver
       ],
       libraries: {
         'libGL.so.1': '/app/lwjgl/libraries/gl4es.wasm'
@@ -156,6 +158,12 @@ window.mcBoot = (function () {
     await cheerpjCreateDisplay(-1, -1, $('game'));
     phase('display');
 
+    if (params.get('probe') === 'assets') {
+      // Times reading every asset object once, warm or not.
+      await cheerpjRunMain('webmc.AssetProbe', '/app/probe.jar');
+      phase('assets-probe-returned');
+      return;
+    }
     if (params.get('probe') === 'file') {
       await cheerpjRunMain('webmc.FileProbe', '/app/probe.jar');
       phase('file-probe-returned');

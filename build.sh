@@ -41,7 +41,7 @@ done
 LW="$(pwd)/vendor/browsercraft/static/lwjgl"
 LWJ="$LW/lwjgl-2.9.3.jar:$LW/lwjgl_util-2.9.3.jar"
 mkdir -p build/probeclasses
-"$JDK/bin/javac" --release 8 -cp "$LWJ" -d build/probeclasses probe/webmc/GlProbe.java probe/webmc/FileProbe.java probe/webmc/CrashProbe.java probe/webmc/GlProbe2.java probe/webmc/NpeProbe.java probe/webmc/GlProbe3.java probe/webmc/GlProbe4.java probe/webmc/GlProbe6.java probe/webmc/GlProbe7.java 2>&1 | head -5
+"$JDK/bin/javac" --release 8 -cp "$LWJ" -d build/probeclasses probe/webmc/*.java 2>&1 | head -5
 "$JDK/bin/jar" --create --file build/probe.jar --main-class webmc.GlProbe -C build/probeclasses .
 echo "[build] build/probe.jar"
 
