@@ -11,7 +11,7 @@
 // canvas is the framebuffer, so canvas pixels are GUI pixels.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const puppeteer = require('puppeteer');
@@ -35,7 +35,16 @@ try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1200, height: 800 });
   const con = [];
-  page.on('console', m => { con.push(m.text()); if (con.length > 8000) con.splice(0, 4000); });
+  // Echo the Java-side log live: a run that is slow and a run that is stuck
+  // look identical from screenshots alone, and the client's own timestamps are
+  // the only cheap way to tell them apart.
+  const QUIET = /^(LIBGL|TODO|\s*$)/;
+  page.on('console', m => {
+    const t = m.text();
+    con.push(t);
+    if (con.length > 8000) con.splice(0, 4000);
+    if (!QUIET.test(t)) console.log(`   C ${t.slice(0, 150)}`);
+  });
   const t0 = Date.now();
   const at = () => Math.round((Date.now() - t0) / 1000);
   await page.goto(`http://127.0.0.1:${PORT}/?${QS}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -46,28 +55,6 @@ try {
   }
   console.log(`window at t+${at()}s`);
 
-  // Mojang's own splash sits perfectly still for minutes before the menu
-  // replaces it, so "the frame changed" is a reliable marker for the menu being
-  // up. The baseline has to be taken after the splash settles, not the instant
-  // the window appears, or the window-manager animation counts as a change.
-  if (process.env.WAIT_FOR_TITLE) {
-    const crypto = require('node:crypto');
-    let prev = null, repeats = 0, base = null;
-    while (Date.now() - t0 < Number(process.env.TITLE_WAIT || 600000)) {
-      const buf = await page.screenshot({ encoding: 'binary' }).catch(() => null);
-      if (!buf) { await sleep(5000); continue; }
-      const h = crypto.createHash('sha1').update(buf).digest('hex');
-      repeats = h === prev ? repeats + 1 : 0;
-      prev = h;
-      if (base === null) {
-        if (repeats >= 3) { base = h; console.log(`  splash steady at t+${at()}s`); }
-      } else if (h !== base) { console.log(`  title reached at t+${at()}s`); break; }
-      await sleep(5000);
-    }
-  }
-  await sleep(Number(process.env.WELCOME_WAIT || 60000));
-  console.log(`settled at t+${at()}s`);
-
   const rect = () => page.evaluate(() => {
     const cs = [...document.querySelectorAll('canvas')];
     // The game canvas is the biggest one; the window chrome has its own.
@@ -76,6 +63,46 @@ try {
     const r = c.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height, cw: c.width, ch: c.height };
   });
+
+  // Mojang's own loading screen is a white background with the logo on it and
+  // its main menu is near-black, so the mean luminance of the game area is a
+  // far steadier marker than a screenshot hash (the hash also moves on its own
+  // when the compositor repaints, and does not move at all if the canvas is
+  // captured blank). The 20 px CheerpJ title bar is excluded.
+  const PY_LUMA = 'import sys\nfrom PIL import Image\n'
+    'im = Image.open(sys.stdin.buffer).convert("RGB")\n'
+    'w, h = im.size\n'
+    'px = im.load()\n'
+    'tot = 0; n = 0\n'
+    'for y in range(21, h, 3):\n'
+    '    for x in range(0, w, 3):\n'
+    '        r, g, b = px[x, y]\n'
+    '        tot += (r * 3 + g * 4 + b * 2) // 9; n += 1\n'
+    'print(tot // n)\n';
+  const brightness = async (p) => {
+    const b = await rect();
+    if (!b) return -1;
+    const buf = await p.screenshot({ encoding: 'binary',
+      clip: { x: b.x, y: b.y + 20, width: b.w, height: b.h - 20 } }).catch(() => null);
+    if (!buf) return -1;
+    try {
+      return Number(execFileSync('python3', ['-c', PY_LUMA], { input: Buffer.from(buf), maxBuffer: 1 << 26 })
+        .toString().trim());
+    } catch { return -1; }
+  };
+
+  if (process.env.WAIT_FOR_TITLE) {
+    let bright = 0, lit = 0;
+    while (Date.now() - t0 < Number(process.env.TITLE_WAIT || 600000)) {
+      bright = await brightness(page);
+      if (bright > 200) lit++;
+      else if (lit >= 2 && bright < 120) { console.log(`  title reached at t+${at()}s (luma ${bright})`); break; }
+      await sleep(4000);
+    }
+    console.log(`  luma now ${bright}, white frames seen ${lit}`);
+  }
+  await sleep(Number(process.env.WELCOME_WAIT || 60000));
+  console.log(`settled at t+${at()}s`);
 
   let n = 0;
   let before = await shot(page, n++);
@@ -90,7 +117,7 @@ try {
     await page.mouse.down(); await sleep(150); await page.mouse.up();
     await sleep(Number(process.env.AFTER_CLICK || 4000));
     const after = await shot(page, n++);
-    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after ${label}`);
+    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after ${label}, luma ${await brightness(page)}`);
     before = after;
   }
 
@@ -107,7 +134,7 @@ try {
     for (let i = 1; i <= 20; i++) { await page.mouse.move(cx + dx * i / 20, cy + dy * i / 20); await sleep(30); }
     await sleep(Number(process.env.AFTER_LOOK || 3000));
     const after = await shot(page, n++);
-    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after look ${label}`);
+    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after look ${label}, luma ${await brightness(page)}`);
     before = after;
   }
 
@@ -118,7 +145,7 @@ try {
     await page.keyboard.down(k); await sleep(600); await page.keyboard.up(k);
     await sleep(2500);
     const after = await shot(page, n++);
-    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after key ${k}`);
+    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after key ${k}, luma ${await brightness(page)}`);
     before = after;
   }
   fs.writeFileSync('/tmp/playtest-console.log', con.join('\n'));

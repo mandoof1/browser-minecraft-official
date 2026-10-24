@@ -113,7 +113,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_HEAD(self):
-        sys.stderr.write("%s - OPEN %s %s range=%s\n" % (self.address_string(), self.command, self.path, self.headers.get("Range")))
+        sys.stderr.write("[%s] %s - OPEN %s %s range=%s\n" % (time.strftime("%H:%M:%S"), self.address_string(), self.command, self.path, self.headers.get("Range")))
         sys.stderr.flush()
         f = resolve(urlparse(self.path).path)
         if not os.path.isfile(f):
@@ -157,7 +157,7 @@ class Handler(SimpleHTTPRequestHandler):
         fpath = os.path.abspath(fpath)
         # log at open, not at close: a client that blocks mid-request is exactly
         # what a port harness needs to see, and the completion log hides it
-        sys.stderr.write("%s - OPEN %s %s range=%s\n" % (self.address_string(), self.command, self.path, self.headers.get("Range")))
+        sys.stderr.write("[%s] %s - OPEN %s %s range=%s\n" % (time.strftime("%H:%M:%S"), self.address_string(), self.command, self.path, self.headers.get("Range")))
         sys.stderr.flush()
         if not os.path.isfile(fpath):
             return self.missing()

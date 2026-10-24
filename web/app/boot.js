@@ -105,6 +105,25 @@ window.mcBoot = (function () {
     if (typeof cheerpjInit !== 'function') throw new Error('CheerpJ loader did not expose cheerpjInit');
 
     const javaMajor = params.get('java') || (Number(plan.javaMajor) >= 17 ? 17 : 8);
+    // ?warm=1 hands CheerpJ the whole asset tree up front. The client reads
+    // ~1070 asset objects during startup, one serial fetch each; the preload
+    // table is keyed by virtual path with 128 KiB block offsets as values, so
+    // the same bytes arrive as parallel fetches instead.
+    let preloads = self.CJ_PRELOAD_RESOURCES;
+    if (params.get('warm') === '1') {
+      const idx = await (await fetch(`/data/vanilla/${ver}/assets/indexes/${plan.assetIndex}.json`)).json();
+      preloads = Object.assign({}, preloads);
+      const blocks = (size) => {
+        const out = [];
+        for (let o = 0; o < Math.max(1, size | 0); o += 131072) out.push(o);
+        return out;
+      };
+      for (const entry of Object.values(idx.objects)) {
+        const h = entry.hash || entry.sha1;
+        preloads[`/app/data/vanilla/${ver}/assets/objects/${h.slice(0, 2)}/${h}`] = blocks(entry.size);
+      }
+      phase('warm', Object.keys(preloads).length + ' files preloaded');
+    }
     await cheerpjInit({
       version: javaMajor,
       javaProperties: [
@@ -130,7 +149,7 @@ window.mcBoot = (function () {
       // meta-index files, cheerpj-awt.jar and libEGL/libGLESv2 one small read
       // at a time - and the path that turns an X11 window into a DOM canvas
       // never completes. ?preload=0 turns it back off for A/B runs.
-      preloadResources: params.get('preload') === '0' ? undefined : self.CJ_PRELOAD_RESOURCES
+      preloadResources: params.get('preload') === '0' ? undefined : preloads
     });
     phase('cheerpj', 'jvm ready (java ' + javaMajor + ')');
 
