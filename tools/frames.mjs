@@ -17,7 +17,10 @@ try {
   await sleep(Number(process.env.BOOT || 90000));
   const game = await page.evaluate(() => {
     const g = document.querySelector('#game');
-    return { exists: !!g, html: g ? g.innerHTML.slice(0, 900) : null,
+    const cw = document.querySelector('.cjWindow, canvas');
+    return { exists: !!g, canvasOrWindow: !!cw,
+             canvas: [...document.querySelectorAll('canvas')].map(c => c.width + 'x' + c.height + '.' + c.className),
+             html: g ? g.innerHTML.slice(0, 900) : null,
              body: document.body.innerHTML.slice(0, 500) };
   });
   console.log('PARENT #game:', JSON.stringify(game));

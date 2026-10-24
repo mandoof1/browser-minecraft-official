@@ -41,18 +41,40 @@ done
 LW="$(pwd)/vendor/browsercraft/static/lwjgl"
 LWJ="$LW/lwjgl-2.9.3.jar:$LW/lwjgl_util-2.9.3.jar"
 mkdir -p build/probeclasses
-"$JDK/bin/javac" --release 8 -cp "$LWJ" -d build/probeclasses probe/webmc/GlProbe.java probe/webmc/FileProbe.java probe/webmc/CrashProbe.java probe/webmc/GlProbe2.java probe/webmc/NpeProbe.java 2>&1 | head -5
+"$JDK/bin/javac" --release 8 -cp "$LWJ" -d build/probeclasses probe/webmc/GlProbe.java probe/webmc/FileProbe.java probe/webmc/CrashProbe.java probe/webmc/GlProbe2.java probe/webmc/NpeProbe.java probe/webmc/GlProbe3.java probe/webmc/GlProbe4.java probe/webmc/GlProbe6.java probe/webmc/GlProbe7.java 2>&1 | head -5
 "$JDK/bin/jar" --create --file build/probe.jar --main-class webmc.GlProbe -C build/probeclasses .
 echo "[build] build/probe.jar"
 
-# Our patched copy of LWJGL 2's package-private scratch-buffer helper, injected
-# into a copy of the LWJGL 2 jar (LWJGL's jars seal their packages, so the class
-# cannot come from a separate jar).
-mkdir -p build/fixclasses
+# Two fixes live inside a copy of Leaning Technologies' LWJGL 2 jar (their jars
+# seal org.lwjgl.*, so a patched class cannot come from a separate jar):
+#
+# 1. org.lwjgl.opengl.APIUtil - its shared scratch buffers from getBufferInt /
+#    getBufferLong / getBufferFloat / getBufferDouble are handed back without
+#    rewinding, so the next native call writes past the end. A desktop JVM lets
+#    that corrupt the heap; CheerpJ's WebAssembly heap is bounds-checked and
+#    throws ArrayIndexOutOfBoundsException on the second glGenFramebuffers.
+# 2. org.lwjgl.opengl.Display.setResizable(boolean) - Minecraft 1.12.2 calls it
+#    just before setTitle/create, which is the right moment to hand LWJGL an AWT
+#    canvas parent (com.webmc.AwtParent). CheerpJ realizes AWT peers as DOM but
+#    never realizes the X11 window Minecraft asks for, so without a parent the
+#    display element stays at "Graphics system is initializing" forever.
+mkdir -p build/fixclasses build/awtclasses
 "$JDK/bin/javac" --release 8 -cp "$LW/lwjgl-2.9.3.jar" -d build/fixclasses lwjglfix/org/lwjgl/opengl/APIUtil.java 2>&1 | head -5
-cp "$LW/lwjgl-2.9.3.jar" build/lwjgl-2.9.3-webmc.jar
-(cd build/fixclasses && "$JDK/bin/jar" --update --file ../lwjgl-2.9.3-webmc.jar org/lwjgl/opengl/APIUtil.class)
-echo "[build] build/lwjgl-2.9.3-webmc.jar (org.lwjgl.opengl.APIUtil rewind fix inside)"
+"$JDK/bin/javac" --release 8 -cp "$LW/lwjgl-2.9.3.jar" -d build/awtclasses awtfix/com/webmc/AwtParent.java 2>&1 | head -5
+cp "$LW/lwjgl-2.9.3.jar" build/lwjgl.tmp.jar
+(cd build/fixclasses && "$JDK/bin/jar" --update --file ../lwjgl.tmp.jar org/lwjgl/opengl/APIUtil.class)
+(cd build/awtclasses && "$JDK/bin/jar" --update --file ../lwjgl.tmp.jar com/webmc/AwtParent.class)
+python3 tools/patchclass.py build/lwjgl.tmp.jar build/lwjgl-2.9.3-webmc.jar \
+  org/lwjgl/opengl/Display.class setResizable "(Z)V" \
+  --static com/webmc/AwtParent attach "(Z)V"
+rm -f build/lwjgl.tmp.jar
+
+# A second copy with Display.setIcon(ByteBuffer[]) dropped as well, for A/B
+# (?lwjgl=v2): it is the other display call 1.12.2 makes and 1.2.5 does not.
+python3 tools/patchclass.py build/lwjgl-2.9.3-webmc.jar build/lwjgl.tmp.jar \
+  org/lwjgl/opengl/Display.class setIcon "([Ljava/nio/ByteBuffer;)I" --const0
+mv -f build/lwjgl.tmp.jar build/lwjgl-2.9.3-webmc2.jar
+echo "[build] build/lwjgl-2.9.3-webmc.jar (APIUtil rewind + AWT parenting; v2 also drops setIcon)"
 
 # A patched copy of Mojang's client jar (two classes; tools/patch-client.sh says
 # why). Generated, never committed: it is Mojang's bytes plus two method bodies.
@@ -65,7 +87,7 @@ bash tools/patch-client.sh
 SRC="$PWD/vendor/browsercraft/static/lwjgl"
 if [ -d "$SRC" ]; then
   mkdir -p web/lwjgl/libraries
-  cp -f "$SRC/lwjgl_util-2.9.3.jar" web/lwjgl/
+  cp -f "$SRC/lwjgl-2.9.3.jar" "$SRC/lwjgl_util-2.9.3.jar" web/lwjgl/
   cp -f "$SRC"/libraries/* web/lwjgl/libraries/ 2>/dev/null || true
   echo "[build] staged web/lwjgl: $(du -sh web/lwjgl | cut -f1) (LWJGL2 wasm runtime from browsercraft)"
 else

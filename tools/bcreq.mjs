@@ -1,0 +1,21 @@
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+const require = createRequire(import.meta.url);
+const puppeteer = require('puppeteer');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const b = await puppeteer.launch({ executablePath: '/usr/bin/brave', headless: true, protocolTimeout: 600000,
+  args: ['--no-sandbox','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader'] });
+const p = await b.newPage();
+const seen = [];
+p.on('request', r => { const u = r.url(); if (/leaningtech|\.wasm|\.js|\.jar|\.data/.test(u)) seen.push(u.replace(/^https?:\/\//,'').slice(0,110)); });
+await p.goto('https://browsercraft.cheerpj.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+await sleep(6000);
+await p.click('input[type=checkbox]').catch(()=>{});
+await sleep(1000);
+await p.evaluate(() => { const e=[...document.querySelectorAll('button,a,[role=button]')].find(x=>/play/i.test(x.textContent||'')); e&&e.click(); });
+await sleep(45000);
+const uniq = [...new Set(seen)];
+fs.writeFileSync('shots/bcreq.txt', uniq.join('\n'));
+console.log('runtime files:', uniq.length);
+for (const u of uniq) if (/cj3|x11|loader|awt|lwjgl|gl4es|\.wasm/.test(u)) console.log('  ' + u);
+await b.close();

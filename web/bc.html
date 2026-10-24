@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>webmc / A-B control: Browsercraft's own setup</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 13px/1.5 system-ui, sans-serif; }
+  #stage { position: absolute; inset: 0; }
+  #bcDisplay { width: 100%; height: 100%; }
+  #hud { position: fixed; left: 8px; bottom: 8px; z-index: 5; background: #000a; padding: 4px 8px;
+         border-radius: 4px; font: 11px/1.4 ui-monospace, monospace; white-space: pre; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="bcDisplay"></div></div>
+<div id="hud">control page: Leaning Technologies' Browsercraft setup, our hosting</div>
+<script src="/app/preload.js"></script>
+<script src="/app/bc.js"></script>
+</body>
+</html>

@@ -30,7 +30,11 @@ def u2(b, o):  return (b[o] << 8) | b[o + 1]
 def u4(b, o):  return (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]
 
 def parse(b):
-    """Return (utf8_map, methods) for a class file, plus offsets we need."""
+    """Return (utf8_map, methods, cp_end, cp_count) for a class file.
+
+    cp_end is the offset of the first byte after the constant pool, which is
+    where a new constant pool entry can be appended without renumbering the
+    existing ones."""
     assert b[:4] == b"\xca\xfe\xba\xbe", "not a class file"
     o = 8
     cp_count = u2(b, o); o += 2
@@ -56,6 +60,7 @@ def parse(b):
             raise SystemExit("unknown constant pool tag %d" % tag)
         i += 1
     # access, this, super, interfaces
+    cp_end = o
     o += 2 + 2 + 2
     n = u2(b, o); o += 2 + 2 * n
     n = u2(b, o); o += 2
@@ -85,7 +90,30 @@ def parse(b):
         methods.append({"start": start, "end": o, "name": utf8.get(name_i),
                         "desc": utf8.get(desc_i), "attrs_start": attrs_start,
                         "code": code_attr})
-    return utf8, methods
+    return utf8, methods, cp_end, cp_count
+
+
+def append_cp(b, cp_end, cp_count, entries):
+    """Append constant pool entries. Constant pool indices are 1-based and
+    cp_count is one past the last used index, so the first new entry lands at
+    cp_count and the rest follow in order - nothing existing is renumbered."""
+    base = cp_count
+    blob = b"".join(entries)
+    return b[:cp_end] + blob + b[cp_end:], cp_count + len(entries), base
+
+
+def call_static_code(target_desc, ref_index):
+    """Bytecode for a replaced method body that forwards to a static helper.
+
+    Only the shapes this project needs are supported: a void method taking one
+    boolean (Display.setResizable) forwards its argument, and a void method
+    taking nothing forwards nothing."""
+    if target_desc == "(Z)V":
+        # aload_0 ; invokestatic #ref ; return
+        return b"\x2a\xb8" + ref_index.to_bytes(2, "big") + b"\xb1", 1, 1
+    if target_desc == "()V":
+        return b"\xb8" + ref_index.to_bytes(2, "big") + b"\xb1", 1, 0
+    raise SystemExit("--static does not support target descriptor %s" % target_desc)
 
 def patch_code(b, meth, code, max_stack=1, max_locals=2):
     """Replace the Code attribute of `meth` with `code`."""
@@ -100,21 +128,52 @@ def patch_code(b, meth, code, max_stack=1, max_locals=2):
 def main():
     src, dst, cls, name, desc = sys.argv[1:6]
     const0 = "--const0" in sys.argv
-    if not const0:
-        raise SystemExit("only --const0 (return 0 / void) is supported")
+    static = None
+    if "--static" in sys.argv:
+        i = sys.argv.index("--static")
+        static = sys.argv[i + 1:i + 4]   # helper class, helper method, helper desc
+        if len(static) != 3:
+            raise SystemExit("--static wants <class> <method> <descriptor>")
+    if not const0 and not static:
+        raise SystemExit("--const0 or --static is required")
     # iconst_0 ; ireturn  - and for a void method just `return`:
     code = b"\x03\xac" if desc.endswith(")I") else b"\xb1"
+    max_stack, max_locals = 1, 2
     zin = zipfile.ZipFile(src)
     if cls not in zin.namelist():
         raise SystemExit("%s not in %s (has %d entries)" % (cls, src, len(zin.namelist())))
     raw = zin.read(cls)
-    _utf8, methods = parse(raw)
+    _utf8, methods, cp_end, cp_count = parse(raw)
     hits = [m for m in methods if m["name"] == name and m["desc"] == desc]
     if len(hits) != 1:
         for m in methods:
             print("  candidate: %s%s" % (m["name"], m["desc"]))
         raise SystemExit("want exactly one %s%s, found %d" % (name, desc, len(hits)))
-    patched = patch_code(raw, hits[0], code)
+    if static:
+        hcls, hname, hdesc = static
+        # Methodref -> Class(name) + NameAndType(name, descriptor).
+        # Duplicated Utf8 entries are legal; reusing existing ones would mean
+        # rescanning the pool, and this runs once per build.
+        base = cp_count                      # first free constant pool index
+        ref = base + 5                       # the Methodref, last entry added
+        entries = [
+            b"\x01" + len(hcls).to_bytes(2, "big") + hcls.encode(),
+            b"\x07" + base.to_bytes(2, "big"),
+            b"\x01" + len(hname).to_bytes(2, "big") + hname.encode(),
+            b"\x01" + len(hdesc).to_bytes(2, "big") + hdesc.encode(),
+            b"\x0c" + (base + 2).to_bytes(2, "big") + (base + 3).to_bytes(2, "big"),
+            b"\x0a" + (base + 1).to_bytes(2, "big") + (base + 4).to_bytes(2, "big"),
+        ]
+        body, max_stack, max_locals = call_static_code(desc, ref)
+        # The method body is at an offset in the unmodified file, so replace it
+        # before appending constant pool entries (which sit before it and shift
+        # everything after them).
+        patched = patch_code(raw, hits[0], body, max_stack, max_locals)
+        patched, new_count, _b = append_cp(patched, cp_end, cp_count, entries)
+        # magic(4) minor(2) major(2) constant_pool_count(2) - the count is at 8.
+        patched = patched[:8] + new_count.to_bytes(2, "big") + patched[10:]
+    else:
+        patched = patch_code(raw, hits[0], code, max_stack, max_locals)
     # Mojang ships client.jar signed: every class has a digest in META-INF/*.SF
     # and the jar is sealed. Editing one class invalidates those digests, and the
     # JVM then refuses the class ("SHA-256 digest error for c.class"), which
@@ -129,8 +188,9 @@ def main():
                 continue
             data = patched if item.filename == cls else zin.read(item.filename)
             zout.writestr(item, data)
+    what = "const0" if const0 else "call %s.%s%s" % tuple(static)
     print("patched %s: %s%s -> %s in %s (%d -> %d bytes)"
-          % (cls, name, desc, "const0", dst, len(raw), len(patched)))
+          % (cls, name, desc, what, dst, len(raw), len(patched)))
 
 if __name__ == "__main__":
     main()

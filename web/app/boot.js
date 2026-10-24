@@ -47,14 +47,20 @@ window.mcBoot = (function () {
   function classpath(plan, ver) {
     const base = '/app/data/vanilla/' + ver;
     const out = [];
+    // ?cpdrop=a,b,c leaves those jars off. Used to bisect a classpath effect:
+    // Minecraft 1.2.5 gets a window div but no canvas once Mojang's 1.12.2
+    // libraries are added, so one of them changes what CheerpJ realizes.
+    const drop = (params.get('cpdrop') || '').split(',').filter(Boolean);
     for (const entry of plan.classpath) {
       const name = entry.split('/').pop();
+      if (drop.some(d => name.includes(d))) continue;
       if (/^lwjgl(_util)?-/.test(name)) continue;
       out.push(entry === 'mc-launcher.jar' ? '/app/mc-launcher.jar' : base + '/' + entry);
     }
     // Leaning Technologies' LWJGL 2.9.3 jars, with our APIUtil rewind patch
     // already inside (their jars seal packages, so the patch has to be in-jar).
-    out.push('/app/lwjgl-2.9.3-webmc.jar');
+    out.push(params.get('lwjgl') === 'v2' ? '/app/lwjgl-2.9.3-webmc2.jar'
+                                          : '/app/lwjgl-2.9.3-webmc.jar');
     out.push('/app/lwjgl/lwjgl_util-2.9.3.jar');
     return out.join(':');
   }
@@ -102,17 +108,27 @@ window.mcBoot = (function () {
       javaProperties: [
         'java.library.path=/app/lwjgl/libraries/',
         'mc.argsFile=/app/data/vanilla/' + ver + '/args.txt',
-        'mc.args=' + plan.args.join('|'),
-        'mc.mainClass=' + plan.mainClass,
+        // ?via=launcher+?mc=1.2.5 runs Leaning Technologies' working demo target
+        // *through our launcher*, to see whether the extra Java frame between
+        // cheerpjRunMain and the game's own main is what stops the window.
+        'mc.args=' + (params.get('via') === 'launcher' ? ' ' : plan.args.join('|')),
+        'mc.mainClass=' + (params.get('mainclass') || plan.mainClass),
         // Mojang's client wants to know where its .minecraft is; /files/ is
         // CheerpJ's persistent (IndexedDB-backed) filesystem, so saves, resource
         // packs and screenshots survive a reload.
-        'webmc.gameDir=/files/minecraft'
+        'webmc.gameDir=/files/minecraft',
+        'webmc.variant=' + (params.get('variant') || 'minimal')
       ],
       libraries: {
         'libGL.so.1': '/app/lwjgl/libraries/gl4es.wasm'
       },
-      enableX11: params.get('x11') !== '0'
+      enableX11: params.get('x11') !== '0',
+      // Leaning Technologies' own Minecraft demo preloads these ranges of its
+      // runtime before starting. Without them the JVM pulls rt.jar, the
+      // meta-index files, cheerpj-awt.jar and libEGL/libGLESv2 one small read
+      // at a time - and the path that turns an X11 window into a DOM canvas
+      // never completes. ?preload=0 turns it back off for A/B runs.
+      preloadResources: params.get('preload') === '0' ? undefined : self.CJ_PRELOAD_RESOURCES
     });
     phase('cheerpj', 'jvm ready (java ' + javaMajor + ')');
 
@@ -128,6 +144,60 @@ window.mcBoot = (function () {
       const cp = '/app/probe.jar:/app/lwjgl-2.9.3-webmc.jar:/app/lwjgl/lwjgl_util-2.9.3.jar';
       await cheerpjRunMain('webmc.GlProbe2', cp);
       phase('gl2-returned');
+      return;
+    }
+    // ?mc=1.2.5 runs Leaning Technologies' demo target through OUR init, OUR
+    // display element and OUR hosting. It is the control that separates "our
+    // page is wrong" from "1.12.2's display path is wrong".
+    if (params.get('mc') === '1.2.5') {
+      // ?full=1 puts 1.2.5 on the *1.12.2* classpath (Mojang's 35 libraries and
+      // our patched LWJGL). If the window disappears, one of those jars is what
+      // stops CheerpJ realizing it - not the game.
+      // ?full=1 = the whole 1.12.2 classpath; ?cpadd=x,y adds specific jars to
+      // the minimal (working) one, which is how the canvas-less case gets
+      // narrowed to a single jar.
+      const minimal = ['/app/lwjgl/lwjgl-2.9.3.jar', '/app/lwjgl/lwjgl_util-2.9.3.jar',
+                       '/app/data/minecraft/1.2.5-client.jar'];
+      const add = (params.get('cpadd') || '').split(',').filter(Boolean)
+        .map(a => a.startsWith('/') ? a : '/app/data/vanilla/' + ver + '/' + a);
+      if (params.get('via') === 'launcher') {
+        await cheerpjRunMain('webmc.Launcher', minimal.concat(['/app/mc-launcher.jar']).join(':'));
+        phase('mc125-via-launcher-returned');
+        return;
+      }
+      const cpbc = params.get('full') === '1'
+        ? classpath(plan, ver) + ':/app/data/minecraft/1.2.5-client.jar'
+        : minimal.concat(add).join(':');
+      await cheerpjRunMain('net.minecraft.client.Minecraft', cpbc);
+      phase('mc125-returned');
+      return;
+    }
+    if (params.get('probe') === 'gl7') {
+      const cp7 = '/app/probe.jar:/app/lwjgl-2.9.3-webmc.jar:/app/lwjgl/lwjgl_util-2.9.3.jar';
+      await cheerpjRunMain('webmc.GlProbe7', cp7);
+      phase('gl7-returned');
+      return;
+    }
+    if (params.get('probe') === 'gl6') {
+      const cp6 = '/app/probe.jar:/app/lwjgl-2.9.3-webmc.jar:/app/lwjgl/lwjgl_util-2.9.3.jar';
+      await cheerpjRunMain('webmc.GlProbe6', cp6);
+      phase('gl6-returned');
+      return;
+    }
+    if (params.get('probe') === 'gl4') {
+      // ?lwjgl=plain uses Browsercraft's untouched LWJGL jar; the default is our
+      // APIUtil-rewind copy. If a window appears with one and not the other, the
+      // patch is what is hiding the window.
+      const lw = params.get('lwjgl') === 'plain' ? '/app/lwjgl/lwjgl-2.9.3.jar' : '/app/lwjgl-2.9.3-webmc.jar';
+      const cp4 = '/app/probe.jar:' + lw + ':/app/lwjgl/lwjgl_util-2.9.3.jar';
+      await cheerpjRunMain('webmc.GlProbe4', cp4);
+      phase('gl4-returned');
+      return;
+    }
+    if (params.get('probe') === 'gl3') {
+      const cp3 = '/app/probe.jar:/app/lwjgl-2.9.3-webmc.jar:/app/lwjgl/lwjgl_util-2.9.3.jar';
+      await cheerpjRunMain('webmc.GlProbe3', cp3);
+      phase('gl3-returned');
       return;
     }
     if (params.get('probe') === 'npe') {
