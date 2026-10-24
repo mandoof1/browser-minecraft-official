@@ -138,7 +138,10 @@ class Handler(SimpleHTTPRequestHandler):
         plans = self.plans()
         out = json.dumps({
             "ok": bool(plans),
-            "isolated": True,
+            # COEP is deliberately absent (see isolation_headers), so this page is
+            # not cross-origin isolated and SharedArrayBuffer is unavailable.
+            # It used to say True unconditionally, which was a claim, not a check.
+            "isolated": False,
             "vanilla": {v: {"clientSha1": p["clientSha1"], "jars": len(p["classpath"]),
                             "assets": p["assetObjects"], "bytes": p["totalJarBytes"],
                             "javaMajor": p["javaMajor"]} for v, p in plans.items()},
