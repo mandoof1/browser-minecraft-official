@@ -10,7 +10,7 @@ services:
     branch: main
     # Mojang's client, libraries and assets are fetched at deploy time, not
     # committed (their EULA does not let us redistribute the game).
-    buildCommand: python3 tools/get-vanilla.py 1.12.2
+    buildCommand: python3 tools/get-vanilla.py 1.12.2 && bash tools/patch-client.sh
     startCommand: python3 tools/serve.py
     healthCheckPath: /health
     autoDeployTrigger: commit
