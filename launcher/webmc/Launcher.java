@@ -1,6 +1,7 @@
 package webmc;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.lang.reflect.Method;
@@ -60,6 +61,12 @@ public final class Launcher {
 		String mainClass = System.getProperty("mc.mainClass", "net.minecraft.client.main.Main");
 		Class<?> game = Class.forName(mainClass);
 		System.out.println("[webmc] resolved " + game.getName() + " from " + game.getProtectionDomain().getCodeSource().getLocation());
+		// CheerpJ can take the whole JVM down when the client thread dies, so the
+		// launcher's own handler never runs and Mojang's crash report - the thing
+		// that names the failing layer - stays inside the persistent filesystem.
+		// A daemon thread that prints new reports as they appear does not depend
+		// on anyone getting a chance to return.
+		watchCrashReports(args);
 		Method main = game.getMethod("main", String[].class);
 		System.out.println("[webmc] calling " + mainClass + ".main - this is Mojang's own bytecode");
 		try {
@@ -159,6 +166,56 @@ public final class Launcher {
 	 * memory" the moment chunk rendering starts. There is no VM flag to pass to
 	 * CheerpJ, so set the field Bits itself uses.
 	 */
+	private static void watchCrashReports(List<String> args) {
+		String gameDir = null;
+		for (int i = 0; i + 1 < args.size(); i++) {
+			if ("--gameDir".equals(args.get(i))) {
+				gameDir = args.get(i + 1);
+			}
+		}
+		if (gameDir == null) {
+			return;
+		}
+		final File reports = new File(gameDir, "crash-reports");
+		Thread t = new Thread(new Runnable() {
+			public void run() {
+				long seen = 0L;
+				while (true) {
+					try {
+						File[] found = reports.listFiles();
+						if (found != null) {
+							for (int i = 0; i < found.length; i++) {
+								if (found[i].lastModified() > seen) {
+									seen = found[i].lastModified();
+									printReport(found[i]);
+								}
+							}
+						}
+					} catch (Throwable ignore) {
+						// the filesystem is asynchronous; a failed listing is not fatal
+					}
+					try {
+						Thread.sleep(5000);
+					} catch (InterruptedException e) {
+						return;
+					}
+				}
+			}
+		});
+		t.setDaemon(true);
+		t.setName("webmc-crash-watch");
+		t.start();
+	}
+
+	private static void printReport(File f) throws Exception {
+		System.out.println("[webmc] ---- " + f.getName() + " (" + f.length() + " bytes) ----");
+		byte[] raw = readAll(new FileInputStream(f));
+		String[] lines = new String(raw, "UTF-8").split("\n");
+		for (int i = 0; i < Math.min(lines.length, 80); i++) {
+			System.out.println("[webmc] > " + lines[i]);
+		}
+	}
+
 	private static void raiseDirectMemory() {
 		System.out.println("[webmc] heap max=" + Runtime.getRuntime().maxMemory()
 				+ " total=" + Runtime.getRuntime().totalMemory());

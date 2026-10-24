@@ -23,7 +23,8 @@ try {
   for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break; } catch {} await sleep(250); }
   browser = await puppeteer.launch({
     executablePath: EXEC, headless: true, protocolTimeout: 900000,
-    args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--window-size=1200,800']
+    args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--window-size=1200,800',
+    ...(process.env.USERDATA ? ['--user-data-dir=' + process.env.USERDATA] : [])]
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1200, height: 800 });

@@ -174,6 +174,16 @@ window.mcBoot = (function () {
     await cheerpjCreateDisplay(-1, -1, $('game'));
     phase('display');
 
+    if (params.get('probe') === 'crashdump') {
+      await cheerpjRunMain('webmc.CrashDump', '/app/probe.jar');
+      phase('crashdump-returned');
+      return;
+    }
+    if (params.get('probe') === 'awtimage') {
+      await cheerpjRunMain('webmc.AwtImageProbe', '/app/probe.jar');
+      phase('awtimage-returned');
+      return;
+    }
     if (params.get('probe') === 'assets') {
       // Times reading every asset object once, warm or not.
       await cheerpjRunMain('webmc.AssetProbe', '/app/probe.jar');
