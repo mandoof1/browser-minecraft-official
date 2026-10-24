@@ -22,6 +22,7 @@ redistributing the game); tools/get-vanilla.py fetches them from Mojang.
 """
 import json
 import os
+import subprocess
 import sys
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -233,10 +234,46 @@ class Handler(SimpleHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
+def ensure_patched_client():
+    """Generate the patched copy of Mojang's client jar if it is not there.
+
+    It is not committed (it is Mojang's bytes plus two method bodies, ~10 MB),
+    and a deploy host should not need a build step, a JDK, or a correctly
+    configured buildCommand to produce it: tools/patchclass.py is pure Python,
+    so we just run it here after Mojang's files exist. If this is skipped the
+    page still loads, it simply falls back to Mojang's unpatched jar and dies
+    inside the crash reporter again - which is a worse failure than a slow
+    start.
+    """
+    base = os.path.join(DATA, "vanilla")
+    if not os.path.isdir(base):
+        return
+    os.makedirs(BUILD, exist_ok=True)
+    for ver in sorted(os.listdir(base)):
+        src = os.path.join(base, ver, "client.jar")
+        out = os.path.join(BUILD, "client-%s-webmc.jar" % ver)
+        if not os.path.isfile(src) or os.path.isfile(out):
+            continue
+        tmp = os.path.join(BUILD, "client-%s.tmp.jar" % ver)
+        steps = [[src, tmp, "c.class", "a", "(I)I"], [tmp, out, "bvu.class", "b", "(Ljava/util/Map;)V"]]
+        ok = True
+        for args in steps:
+            r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "patchclass.py")]
+                               + args + ["--const0"], cwd=ROOT, capture_output=True, text=True)
+            if r.returncode != 0:
+                sys.stderr.write("patchclass failed for %s: %s" % (ver, (r.stderr or r.stdout)[:200]))
+                ok = False
+        if ok:
+            print("[serve] generated %s" % os.path.relpath(out, ROOT), flush=True)
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", "8780"))
     hosted = bool(os.environ.get("RENDER")) or bool(os.environ.get("DYNO"))
     host = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("HOST", "0.0.0.0" if hosted else "127.0.0.1")
+    ensure_patched_client()
     httpd = ThreadingHTTPServer((host, port), Handler)
     print("http://%s:%d/  (root=%s)" % (host, port, ROOT), flush=True)
     try:
