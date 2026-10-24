@@ -94,7 +94,24 @@ try {
     before = after;
   }
 
-  for (const k of (process.env.KEYS || '').split(',').filter(Boolean)) {
+  // Mouse look: LWJGL reads a relative mouse delta, so a move has to be a
+  // sequence of small steps from the middle of the window, not a jump.
+  for (const s of (process.env.LOOKS || '').split(';').filter(Boolean)) {
+    const [dxs, dys, label] = s.split(',');
+    const b = await rect();
+    if (!b) { console.log('no canvas'); break; }
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const dx = Number(dxs) * (b.w / b.cw), dy = Number(dys) * (b.h / b.ch);
+    console.log(`t+${at()}s look ${label} by ${dx.toFixed(0)},${dy.toFixed(0)} px`);
+    await page.mouse.move(cx, cy);
+    for (let i = 1; i <= 20; i++) { await page.mouse.move(cx + dx * i / 20, cy + dy * i / 20); await sleep(30); }
+    await sleep(Number(process.env.AFTER_LOOK || 3000));
+    const after = await shot(page, n++);
+    console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after look ${label}`);
+    before = after;
+  }
+
+  for (const k of (process.env.KEYS || '').split(';').filter(Boolean)) {
     const b = await rect();
     if (b) await page.mouse.move(b.x + b.w / 2, b.y + b.h / 2);
     console.log(`t+${at()}s key ${k}`);

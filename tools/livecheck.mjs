@@ -66,6 +66,24 @@ try {
     if (!hit) await sleep(1000);
   }
   check(!!hit, 'unmodified client logged its own line', hit ? hit.slice(0, 120) : `nothing within ${WAIT}ms`);
+  // The window is the thing that used to never appear: CheerpJ leaves the
+  // display element at "Graphics system is initializing" unless LWJGL is given
+  // an AWT canvas parent. Asserting on it here means a deploy that loses the
+  // AwtParent patch fails this check instead of looking fine.
+  const WWIN = Number(process.env.WINDOW_WAIT || 180000);
+  const w0 = Date.now();
+  let win = null;
+  while (Date.now() - w0 < WWIN && !win) {
+    win = await page.evaluate(() => {
+      const c = document.querySelector('.cjWindow canvas');
+      if (!c) return null;
+      const cs = [...document.querySelectorAll('canvas')].map(x => x.width + 'x' + x.height);
+      return { cs, status: (document.querySelector('#game') || {}).getAttribute?.('data-status') ?? null };
+    }).catch(() => null);
+    if (!win) await sleep(2000);
+  }
+  check(!!win, 'CheerpJ realized a window (div.cjWindow with a canvas)',
+    win ? JSON.stringify(win).slice(0, 160) : `none within ${WWIN}ms`);
   const phases = await page.evaluate(() => (window.mcBoot ? mcBoot.phases() : {})).catch(() => ({}));
   say('     phases:', JSON.stringify(phases));
   const isolated = await page.evaluate(() => self.crossOriginIsolated).catch(() => null);
