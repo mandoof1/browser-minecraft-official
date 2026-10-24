@@ -6,10 +6,9 @@ this repository is a reimplementation of the game.
 
 Target version: **Minecraft 1.12.2** (Java 8, LWJGL 2).
 
-Status: **the game reaches its own title screen and is drawn on screen.**
-Details under [Where it stands](#where-it-stands). Input works on the same
-stack (verified with Minecraft 1.2.5 on this same origin), and gameplay on
-1.12.2 is the part still being finished.
+Status: **the game boots to its own menu, generates a world and takes keyboard
+input.** Details under [Where it stands](#where-it-stands). Mouse look and
+acceptable startup time are what is left.
 
 The sibling project `../browser-minecraft` is a different approach (EaglercraftX,
 a pre-existing browser port) and is fully playable/deployed. This one is the
@@ -196,6 +195,25 @@ against an unsigned copy of the unpatched jar on a desktop JVM - same answers.
 `?cee=0` selects the jar without that patch (`build/client-1.12.2-webmc-nocee.jar`)
 so the two can be timed against each other.
 
+**11. The integrated server binds a local channel to a Nio event loop.** When a
+world finishes generating, 1.12.2 starts its integrated server and connects to it
+over Netty's `LocalChannel`. `NetworkSystem` (class `oz`) binds a
+`LocalServerChannel` but groups it with the **Nio** group, and there is no Nio
+`Selector` under CheerpJ:
+
+```
+java.lang.IllegalStateException: failed to create a child event loop
+    at io.netty.channel.nio.NioEventLoopGroup.<init>
+    at oz$1.a -> rh.c -> oz.a -> bib.a -> boi.a -> blk.q -> bib.t
+Description: Updating screen events
+```
+
+Mojang already has the pure-Java `LocalEventLoopGroup` in the same class (field
+`c`); the client side of the same connection already uses it. So the fix is one
+constant: that `getstatic oz.a` becomes `getstatic oz.c`, which is what
+`--fieldref a c` in `tools/patchclass.py` does - it walks the method's bytecode
+and rewrites the operand, keeping the class file the same length.
+
 ## Where it stands
 
 Working, with evidence from the unmodified client's own log:
@@ -295,9 +313,36 @@ and the screenshot shows Mojang's own splash, then Mojang's own main menu:
 Singleplayer / Multiplayer / Minecraft Realms / Options / Quit Game, the "Deja Vu"
 splash text, "Minecraft 1.12.2" and "Copyright Mojang AB. Do not distribute!".
 
-That is the next thing to attack: get CheerpJ to realize a display for an
-LWJGL 2 window, then look at the shader failures (gl4es's GLSL rejects
-`blur.fsh`'s loop) and the missing `jawt.js` / OpenAL.
+Past the menu, the client now generates a world:
+
+```
+t+36s   window (div.cjWindow + canvas.cjSwapped)
+t+116s  Mojang's own main menu
+t+124s  click Singleplayer      -> screen changes
+t+166s  click Create New World  -> screen changes
+t+207s  click Create New World  -> "Loading world / Building terrain"
+```
+
+That is Mojang's own world generator running: `shots/play-03-w5.png` shows its
+own loading screen with its own dirt-pan background.
+
+What is left:
+
+- **Waiting on it.** An interpreted 1.12.2 takes 2-12 minutes to reach its own
+  menu on this machine depending on what else is running, and world generation
+  outlasts that. `tools/playtest.mjs` therefore waits on evidence rather than
+  sleeps: the loading screen is a dark dirt pan and a loaded world is sky and
+  terrain, so luminance of the game area is the marker.
+- **Mouse look.** Keyboard input reaches the game (the frame changes on `W`),
+  relative mouse deltas are the part not yet confirmed.
+- **Sound.** `Unable to initialize OpenAL. Probable cause: OpenAL not supported.`
+  The client falls back to its own silent mode. Leaning Technologies' own
+  Minecraft demo has the same limitation - Browsercraft ships no OpenAL.
+- **`blur.fsh`.** gl4es's GLSL front end rejects the loop in Mojang's
+  `shaders/program/blur.fsh` (`Loop index cannot be initialized with
+  non-constant expression`), so the `entity_outline` post-processing effect
+  fails to load. It is a warning, not a crash.
+- **Realms** tries to reach `pc.realms.minecraft.net` and is blocked by CORS.
 
 ### Version notes
 

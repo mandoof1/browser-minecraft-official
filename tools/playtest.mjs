@@ -46,7 +46,7 @@ try {
     const t = m.text();
     con.push(t);
     if (con.length > 8000) con.splice(0, 4000);
-    if (!QUIET.test(t)) console.log(`   C ${t.slice(0, 150)}`);
+    if (!QUIET.test(t)) console.log(`   C ${t.slice(0, 1200)}`);
   });
   const t0 = Date.now();
   const at = () => Math.round((Date.now() - t0) / 1000);
@@ -129,6 +129,23 @@ print(tot // max(1, n))
     const after = await shot(page, n++);
     console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after ${label}, luma ${await brightness(page)}`);
     before = after;
+  }
+
+  // World generation under an interpreted JVM outlasts any fixed sleep, and
+  // the loading screen is a dark dirt pan while a loaded world is sky and
+  // terrain, so luminance is the marker again.
+  if (process.env.WORLD_WAIT) {
+    const target = Number(process.env.INWORLD_LUMA || 60);
+    const w0 = Date.now();
+    let bright = await brightness(page), hits = 0;
+    while (Date.now() - w0 < Number(process.env.WORLD_WAIT)) {
+      bright = await brightness(page);
+      hits = bright >= target ? hits + 1 : 0;
+      if (hits >= 2) { console.log(`  in world at t+${at()}s (luma ${bright})`); break; }
+      await sleep(5000);
+    }
+    console.log(`  luma now ${bright} (target ${target})`);
+    await shot(page, n++);
   }
 
   // Mouse look: LWJGL reads a relative mouse delta, so a move has to be a

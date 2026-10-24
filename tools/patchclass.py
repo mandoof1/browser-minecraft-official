@@ -145,6 +145,142 @@ def patch_code(b, meth, code, max_stack=1, max_locals=2):
     # Keep the name, rewrite length + info. attribute_length counts only info.
     return b[:off + 2] + len(body).to_bytes(4, "big") + body + b[off + 6 + alen:]
 
+
+def _oplengths():
+    """Instruction lengths from the JVM opcode table, as (total) bytes.
+
+    Only needed to walk a Code array without mistaking an operand byte for an
+    opcode, but the variable-length ones (wide, tableswitch, lookupswitch) are
+    handled by walk() itself."""
+    t = {}
+    def rng(a, b, n):
+        for o in range(a, b + 1):
+            t[o] = n
+    rng(0x00, 0x0f, 1)          # nop, aconst_*, lconst_*, fconst_*, dconst_*
+    t[0x10] = 2                 # bipush
+    t[0x11] = 3                 # sipush
+    t[0x12] = 2                 # ldc
+    t[0x13] = 3                 # ldc_w
+    t[0x14] = 3                 # ldc2_w
+    rng(0x15, 0x19, 2)          # iload .. aload
+    rng(0x1a, 0x2d, 1)          # iload_0 .. aload_3
+    rng(0x2e, 0x35, 1)          # *aload
+    rng(0x36, 0x3a, 2)          # istore .. astore
+    rng(0x3b, 0x4e, 1)          # istore_0 .. astore_3
+    rng(0x4f, 0x56, 1)          # *astore
+    rng(0x57, 0x5f, 1)          # pop, dup, swap
+    rng(0x60, 0x81, 1)          # arithmetic and shifts
+    t[0x82] = 3                 # iinc
+    rng(0x83, 0x98, 1)          # comparisons and conversions
+    rng(0x99, 0xa8, 3)          # if_*, goto, jsr
+    rng(0xac, 0xb1, 1)          # returns
+    rng(0xb2, 0xb8, 3)          # getstatic .. invokestatic
+    t[0xb9] = 5                 # invokeinterface (index, 0, reserved)
+    t[0xba] = 5                 # invokedynamic (index, reserved, reserved)
+    t[0xbb] = 3                 # new
+    t[0xbc] = 2                 # newarray
+    t[0xbd] = 3                 # anewarray
+    rng(0xbe, 0xc3, 1)          # arraylength, athrow, checkcast, instanceof, monitorenter/exit
+    t[0xc5] = 4                 # multianewarray
+    rng(0xc6, 0xd7, 3)          # if_acmpeq .. if_icmple
+    t[0xd8] = 3                 # jsr
+    t[0xd9] = 2                 # ret
+    rng(0xda, 0xdb, 3)          # getfield, putfield
+    rng(0xdc, 0xdd, 5)          # goto_w, jsr_w
+    return t
+
+
+LEN = _oplengths()
+
+
+def walk(code):
+    """Yield (offset, opcode) for every instruction in a Code array."""
+    o, n = 0, len(code)
+    while o < n:
+        op = code[o]
+        yield o, op
+        if op in (0xaa, 0xab):                      # tableswitch / lookupswitch
+            p = (o + 4) - ((o + 4) % 4)
+            npairs = int.from_bytes(code[p + 4:p + 8], "big")
+            l = 12 + 8 * npairs if op == 0xab else 16 + 4 * (int.from_bytes(code[p + 12:p + 16], "big")
+                                                             - int.from_bytes(code[p + 8:p + 12], "big") + 1)
+            o += l
+        elif op == 0xc4:                            # wide
+            o += 6 if code[o + 1] == 0x84 else 4
+        else:
+            l = LEN.get(op)
+            if l is None:
+                raise SystemExit("unknown opcode 0x%02x at %d" % (op, o))
+            o += l
+
+
+def fieldrefs(b, utf8, cp_count):
+    """[(index, class_idx, field_name, descriptor)] for every Fieldref.
+
+    A Fieldref points at a NameAndType, which is where the name and descriptor
+    actually live, so the pool is collected in two passes."""
+    o = 10
+    raw = {}
+    i = 1
+    while i < cp_count:
+        tag = b[o]; o += 1
+        if tag == 1:
+            n = u2(b, o); raw[i] = (tag, b[o:o + n]); o += 2 + n
+        elif tag in (3, 4):
+            raw[i] = (tag, b[o:o + 4]); o += 4
+        elif tag in (5, 6):
+            raw[i] = (tag, b[o:o + 8]); o += 8; i += 1
+        elif tag in (7, 8, 16, 19, 20):
+            raw[i] = (tag, b[o:o + 2]); o += 2
+        elif tag in (9, 10, 11, 12, 17, 18):
+            raw[i] = (tag, b[o:o + 4]); o += 4
+        elif tag == 15:
+            raw[i] = (tag, b[o:o + 3]); o += 3
+        else:
+            raise SystemExit("unknown constant pool tag %d" % tag)
+        i += 1
+
+    def nat(idx):
+        tag, v = raw[idx]
+        assert tag == 12, "constant pool index %d is not a NameAndType" % idx
+        return utf8.get(u2(v, 0)), utf8.get(u2(v, 2))
+
+    def cls_name(idx):
+        tag, v = raw[idx]
+        return utf8.get(u2(v, 0)) if tag == 7 else None
+
+    out = []
+    for idx, (tag, v) in raw.items():
+        if tag == 9:
+            name, desc = nat(u2(v, 2))
+            out.append((idx, u2(v, 0), cls_name(u2(v, 0)), name, desc))
+    return out, raw
+
+
+def swap_getstatic(b, meth, old_idx, new_idx):
+    """Rewrite getstatic operands inside one method's Code, in place.
+
+    The operand pair is the same width either way, so the class file does not
+    change length and no offsets move."""
+    attr, _alen = meth["code"]
+    if attr is None:
+        raise SystemExit("%s%s has no Code attribute" % (meth["name"], meth["desc"]))
+    start = attr + 14                 # name(2) len(4) max_stack(2) max_locals(2) code_len(4)
+    clen = u4(b, attr + 10)
+    code = bytearray(b[start:start + clen])
+    n = 0
+    for off, op in walk(code):
+        if op in (0xb2, 0xb3) and u2(code, off + 1) == old_idx:
+            code[off + 1:off + 3] = new_idx.to_bytes(2, "big")
+            n += 1
+    if n == 0:
+        raise SystemExit("no getstatic of constant pool index %d in %s%s"
+                         % (old_idx, meth["name"], meth["desc"]))
+    out = bytearray(b)
+    out[start:start + clen] = code
+    return bytes(out), n
+
+
 def main():
     src, dst, cls, name, desc = sys.argv[1:6]
     const0 = "--const0" in sys.argv
@@ -160,8 +296,14 @@ def main():
         static = sys.argv[i + 1:i + 4]   # helper class, helper method, helper desc
         if len(static) != 3:
             raise SystemExit("--static wants <class> <method> <descriptor>")
-    if not const0 and not static and not nonnull:
-        raise SystemExit("--const0, --static or --nonnull is required")
+    fieldref = None
+    if "--fieldref" in sys.argv:
+        i = sys.argv.index("--fieldref")
+        fieldref = sys.argv[i + 1:i + 3]      # old field name, new field name
+        if len(fieldref) != 2:
+            raise SystemExit("--fieldref wants <old field> <new field>")
+    if not const0 and not static and not nonnull and not fieldref:
+        raise SystemExit("--const0, --static, --nonnull or --fieldref is required")
     # iconst_0 ; ireturn  - and for a void method just `return`:
     code = b"\x03\xac" if desc.endswith(")I") else b"\xb1"
     max_stack, max_locals = 1, 2
@@ -218,6 +360,58 @@ def main():
         patched, new_count, _b = append_cp(patched, cp_end, cp_count, entries)
         # magic(4) minor(2) major(2) constant_pool_count(2) - the count is at 8.
         patched = patched[:8] + new_count.to_bytes(2, "big") + patched[10:]
+    elif fieldref:
+        old_field, new_field = fieldref
+        refs, pool = fieldrefs(raw, _utf8, cp_count)
+        this_class = u2(raw, 12)
+        # The class of a Fieldref is a Class entry, and javac is free to emit a
+        # second one naming the same class, so compare names, not indices.
+        this_name = _utf8.get(u2(pool[u2(raw, cp_end + 2)][1], 0))
+        want = [r for r in refs if r[3] == old_field and r[2] == this_name]
+        if not want:
+            raise SystemExit("no Fieldref for this class field %s (class %s)" % (old_field, this_name))
+        oidx, cidx, _cn, _nm, desc = want[0]
+        have = [r for r in refs if r[3] == new_field and r[2] == this_name and r[4] == desc]
+        if have:
+            nidx = have[0][0]
+            entries, new_count = [], cp_count
+        else:
+            # Utf8(new name) + NameAndType(new name, same descriptor) + Fieldref.
+            base = cp_count
+            desc_i = None
+            o = 10
+            for i in range(1, cp_count):
+                tag = raw[o]; o += 1
+                if tag == 1:
+                    n = u2(raw, o)
+                    if u2(raw, o - 2) == n and raw[o:o + n] == desc.encode():
+                        desc_i = i
+                    o += 2 + n
+                elif tag in (3, 4):
+                    o += 4
+                elif tag in (5, 6):
+                    o += 8; i += 1
+                elif tag in (7, 8, 16, 19, 20):
+                    o += 2
+                elif tag in (9, 10, 11, 12, 17, 18):
+                    o += 4
+                elif tag == 15:
+                    o += 3
+            if desc_i is None:
+                raise SystemExit("descriptor %s is not in the pool" % desc)
+            entries = [
+                b"\x01" + len(new_field).to_bytes(2, "big") + new_field.encode(),
+                b"\x0c" + base.to_bytes(2, "big") + desc_i.to_bytes(2, "big"),
+                b"\x09" + cidx.to_bytes(2, "big") + (base + 1).to_bytes(2, "big"),
+            ]
+            nidx = base + 2
+            new_count = cp_count + 3
+        patched, n = swap_getstatic(raw, hits[0], oidx, nidx)
+        patched, new_count, _b = append_cp(patched, cp_end, cp_count, entries) if entries \
+            else (patched, new_count, None)
+        patched = patched[:8] + new_count.to_bytes(2, "big") + patched[10:]
+        print("patched %s: %s%s getstatic %s -> %s (%d site%s)"
+              % (cls, name, desc, old_field, new_field, n, "s" if n != 1 else ""))
     else:
         patched = patch_code(raw, hits[0], code, max_stack, max_locals)
     # Mojang ships client.jar signed: every class has a digest in META-INF/*.SF
@@ -234,8 +428,11 @@ def main():
                 continue
             data = patched if item.filename == cls else zin.read(item.filename)
             zout.writestr(item, data)
-    what = "const0" if const0 else ("nonnull %s.%s%s" % tuple(nonnull) if nonnull
-                                    else "call %s.%s%s" % tuple(static))
+    if fieldref:
+        what = "fieldref %s -> %s" % tuple(fieldref)
+    else:
+        what = "const0" if const0 else ("nonnull %s.%s%s" % tuple(nonnull) if nonnull
+                                        else "call %s.%s%s" % tuple(static))
     print("patched %s: %s%s -> %s in %s (%d -> %d bytes)"
           % (cls, name, desc, what, dst, len(raw), len(patched)))
 

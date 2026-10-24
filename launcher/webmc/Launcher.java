@@ -64,6 +64,10 @@ public final class Launcher {
 		try {
 			main.invoke(null, new Object[] { args.toArray(new String[0]) });
 			System.out.println("[webmc] game main returned");
+			// The client catches its own fatal exceptions, writes a crash report
+			// and returns normally, so a clean return is not evidence of a clean
+			// run. Look for a report either way.
+			dumpGameLogs(args);
 		} catch (Throwable t) {
 			// Mojang's client turns failures into a crash report under the game
 			// directory; print what it wrote, because that report names the layer
@@ -169,6 +173,22 @@ public final class Launcher {
 			if (found != null) {
 				for (int i = 0; i < found.length; i++) {
 					System.out.println("[webmc] crash report: " + found[i].getName() + " (" + found[i].length() + " bytes)");
+				}
+				// The report body is the thing that names the failing layer, and
+				// the client only ever prints the first couple of lines of it.
+				java.io.File newest = found.length > 0 ? found[0] : null;
+				for (int i = 1; i < found.length; i++) {
+					if (found[i].lastModified() > newest.lastModified()) {
+						newest = found[i];
+					}
+				}
+				if (newest != null && newest.isFile()) {
+					System.out.println("[webmc] ---- " + newest.getName() + " ----");
+					byte[] raw = readAll(new FileInputStream(newest));
+					String[] lines = new String(raw, "UTF-8").split("\n");
+					for (int i = 0; i < Math.min(lines.length, 120); i++) {
+						System.out.println("[webmc] > " + lines[i]);
+					}
 				}
 			}
 			java.io.File[] top = new java.io.File(gameDir).listFiles();
