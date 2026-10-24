@@ -162,7 +162,21 @@ public final class Launcher {
 				+ " total=" + Runtime.getRuntime().totalMemory());
 		try {
 			Class<?> bits = Class.forName("java.nio.Bits");
-			java.lang.reflect.Field limit = bits.getDeclaredField("maxDirectMemory");
+			// The field holding the cap is called maxMemory in java.nio.Bits; the
+			// getter that feeds it is VM.maxDirectMemory(). Try both spellings so
+			// this keeps working if a future runtime renames it.
+			java.lang.reflect.Field limit = null;
+			for (String name : new String[] { "maxMemory", "maxDirectMemory" }) {
+				try {
+					limit = bits.getDeclaredField(name);
+					break;
+				} catch (NoSuchFieldException ignore) {
+					// next spelling
+				}
+			}
+			if (limit == null) {
+				throw new NoSuchFieldException("neither maxMemory nor maxDirectMemory");
+			}
 			java.lang.reflect.Field set = bits.getDeclaredField("memoryLimitSet");
 			limit.setAccessible(true);
 			set.setAccessible(true);

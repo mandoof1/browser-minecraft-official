@@ -6,9 +6,9 @@ this repository is a reimplementation of the game.
 
 Target version: **Minecraft 1.12.2** (Java 8, LWJGL 2).
 
-Status: **the game boots to its own menu, generates a world and takes keyboard
-input.** Details under [Where it stands](#where-it-stands). Mouse look and
-acceptable startup time are what is left.
+Status: **Mojang's Minecraft 1.12.2 runs, generates a world and is played in
+the browser.** Details under [Where it stands](#where-it-stands). Startup time
+and tick rate are the parts that are still poor.
 
 The sibling project `../browser-minecraft` is a different approach (EaglercraftX,
 a pre-existing browser port) and is fully playable/deployed. This one is the
@@ -214,6 +214,23 @@ constant: that `getstatic oz.a` becomes `getstatic oz.c`, which is what
 `--fieldref a c` in `tools/patchclass.py` does - it walks the method's bytecode
 and rewrites the operand, keeping the class file the same length.
 
+**12. 64 MB of direct buffer memory is not enough for a world.** Once the world
+finished generating and chunk rendering started, the client died with
+`OutOfMemoryError: Direct buffer memory` inside `java.nio.Bits.reserveMemory`.
+Mojang allocates a direct `ByteBuffer` per chunk section it builds geometry for
+(`ByteBufferUtils`, class `bia`, method `c(int)`), and the cap is
+`-XX:MaxDirectMemorySize`, which defaults to the max heap and is read from the
+VM once at boot. CheerpJ reports a 2 GiB heap but a 64 MiB direct cap, and there
+is no VM flag to hand it. So `Launcher.raiseDirectMemory()` sets the field
+`java.nio.Bits` itself reads (`maxMemory`; the getter is `VM.maxDirectMemory()`,
+so both spellings are tried) and marks `memoryLimitSet` so the VM value does not
+come back:
+
+```
+[webmc] heap max=2147483648 total=2147483648
+[webmc] maxDirectMemory 67108864 -> 2147483648
+```
+
 ## Where it stands
 
 Working, with evidence from the unmodified client's own log:
@@ -313,18 +330,34 @@ and the screenshot shows Mojang's own splash, then Mojang's own main menu:
 Singleplayer / Multiplayer / Minecraft Realms / Options / Quit Game, the "Deja Vu"
 splash text, "Minecraft 1.12.2" and "Copyright Mojang AB. Do not distribute!".
 
-Past the menu, the client now generates a world:
+Past the menu, the client generates a world and then renders it:
 
 ```
 t+36s   window (div.cjWindow + canvas.cjSwapped)
-t+116s  Mojang's own main menu
-t+124s  click Singleplayer      -> screen changes
-t+166s  click Create New World  -> screen changes
-t+207s  click Create New World  -> "Loading world / Building terrain"
+t+125s  Mojang's own main menu
+t+133s  click Singleplayer      -> screen changes
+t+174s  click Create New World  -> screen changes
+t+215s  click Create New World  -> "Loading world / Building terrain"
+t+383s  in world (luma 149)
+t+384s  mouse look right        -> screen changes
+t+391s  mouse look down         -> screen changes
+t+398s  W                       -> screen changes
 ```
 
-That is Mojang's own world generator running: `shots/play-03-w5.png` shows its
-own loading screen with its own dirt-pan background.
+`shots/play-09-w9.png` is the payoff: sky, ocean, a mountain, grass, the
+crosshair, a full health bar, the hunger bar, the hotbar and Mojang's own
+"Move with W, A, S and D / Jump with SPACE" toast - all drawn by Mojang's
+bytecode through gl4es, with no canvas reimplementation anywhere in between.
+
+The integrated server is not keeping up:
+
+```
+[Server thread/WARN]: Can't keep up! Did the system time change, or is the
+server overloaded? Running 6721ms behind, skipping 134 tick(s)
+```
+
+That is an interpreted 1.12.2 on a WebAssembly JVM, so it is the honest cost of
+this route rather than a bug to file.
 
 What is left:
 
@@ -333,8 +366,9 @@ What is left:
   outlasts that. `tools/playtest.mjs` therefore waits on evidence rather than
   sleeps: the loading screen is a dark dirt pan and a loaded world is sky and
   terrain, so luminance of the game area is the marker.
-- **Mouse look.** Keyboard input reaches the game (the frame changes on `W`),
-  relative mouse deltas are the part not yet confirmed.
+- **Block interaction and saving.** Mining, placing, the inventory screen and
+  quitting to a title screen and rejoining the same world are not yet verified
+  end to end.
 - **Sound.** `Unable to initialize OpenAL. Probable cause: OpenAL not supported.`
   The client falls back to its own silent mode. Leaning Technologies' own
   Minecraft demo has the same limitation - Browsercraft ships no OpenAL.
