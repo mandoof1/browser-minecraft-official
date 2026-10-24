@@ -14,3 +14,5 @@
 /build/probeclasses/
 /build/fixclasses/
 __pycache__/
+/build/awtclasses/
+/build/fixclasses/
