@@ -34,7 +34,8 @@ const shot = async (p, n) => {
 };
 try {
   browser = await puppeteer.launch({ executablePath: '/usr/bin/brave', headless: true, protocolTimeout: 900000,
-    args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--window-size=1200,800'] });
+    args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--window-size=1200,800',
+    ...(process.env.USERDATA ? ['--user-data-dir=' + process.env.USERDATA] : [])] });
   const page = await browser.newPage();
   await page.setViewport({ width: 1200, height: 800 });
   const con = [];
@@ -114,6 +115,34 @@ print(tot // max(1, n))
   await sleep(Number(process.env.WELCOME_WAIT || 60000));
   console.log(`settled at t+${at()}s`);
 
+  // One action per ';' entry: click:x,y | key:KeyE | look:dx,dy | sleep:1200 |
+  // quit. Every action that changes the frame is followed by a screenshot and
+  // a luminance reading, which is how "the game responded" is shown rather than
+  // assumed. The old CLICKS/LOOKS/KEYS variables still work.
+  const doClick = async (xs, ys, label) => {
+    const b = await rect();
+    if (!b) { console.log('no canvas'); return; }
+    const x = b.x + Number(xs) * (b.w / b.cw), y = b.y + Number(ys) * (b.h / b.ch);
+    await page.mouse.move(x, y); await sleep(500);
+    await page.mouse.down(); await sleep(150); await page.mouse.up();
+    await sleep(Number(process.env.AFTER_CLICK || 4000));
+  };
+  const doLook = async (dxs, dys) => {
+    const b = await rect();
+    if (!b) return;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const dx = Number(dxs) * (b.w / b.cw), dy = Number(dys) * (b.h / b.ch);
+    await page.mouse.move(cx, cy);
+    for (let i = 1; i <= 20; i++) { await page.mouse.move(cx + dx * i / 20, cy + dy * i / 20); await sleep(30); }
+    await sleep(Number(process.env.AFTER_LOOK || 3000));
+  };
+  const doKey = async (k) => {
+    const b = await rect();
+    if (b) await page.mouse.move(b.x + b.w / 2, b.y + b.h / 2);
+    await page.keyboard.down(k); await sleep(600); await page.keyboard.up(k);
+    await sleep(2500);
+  };
+
   let n = 0;
   let before = await shot(page, n++);
   const steps = (process.env.CLICKS || '').split(';').filter(Boolean);
@@ -175,6 +204,23 @@ print(tot // max(1, n))
     console.log(`   screen ${before === after ? 'UNCHANGED' : 'CHANGED'} after key ${k}, luma ${await brightness(page)}`);
     before = after;
   }
+  if (process.env.ACTIONS) {
+    let m = 0;
+    let prev = await shot(page, m++);
+    for (const a of process.env.ACTIONS.split(';').filter(Boolean)) {
+      const [kind, ...rest] = a.split(':');
+      const arg = rest.join(':');
+      if (kind === 'click') { const [x, y, label] = arg.split(','); console.log(`t+${at()}s click ${label || arg} canvas(${x},${y})`); await doClick(x, y, label); }
+      else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
+      else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
+      else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else { console.log(`unknown action ${a}`); continue; }
+      const now = await shot(page, m++);
+      console.log(`   screen ${prev === now ? 'UNCHANGED' : 'CHANGED'} after ${a}, luma ${await brightness(page)}`);
+      prev = now;
+    }
+  }
+
   fs.writeFileSync('/tmp/playtest-console.log', con.join('\n'));
   console.log(`console: /tmp/playtest-console.log (${con.length} lines)`);
 } finally { try { await browser?.close(); } catch {} srv && srv.kill(); }
