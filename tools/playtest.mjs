@@ -164,17 +164,22 @@ print(tot // max(1, n))
   // World generation under an interpreted JVM outlasts any fixed sleep, and
   // the loading screen is a dark dirt pan while a loaded world is sky and
   // terrain, so luminance is the marker again.
+  // Luminance alone is not enough here: the main menu's panorama is as bright
+  // as a loaded world, which made the old check fire while terrain was still
+  // being generated. Mojang's own log line is the marker - the integrated
+  // server sets the view distance once the spawn area is ready.
   if (process.env.WORLD_WAIT) {
-    const target = Number(process.env.INWORLD_LUMA || 60);
+    const want = /Changing view distance to|Preparing spawn area: 100/;
     const w0 = Date.now();
-    let bright = await brightness(page), hits = 0;
+    let hit = null;
     while (Date.now() - w0 < Number(process.env.WORLD_WAIT)) {
-      bright = await brightness(page);
-      hits = bright >= target ? hits + 1 : 0;
-      if (hits >= 2) { console.log(`  in world at t+${at()}s (luma ${bright})`); break; }
-      await sleep(5000);
+      hit = con.find(l => want.test(l));
+      if (hit) break;
+      await sleep(3000);
     }
-    console.log(`  luma now ${bright} (target ${target})`);
+    if (hit) console.log(`  world loaded at t+${at()}s: ${hit.slice(0, 90)}`);
+    else console.log(`  no world-load log line within ${process.env.WORLD_WAIT}ms`);
+    await sleep(8000);
     await shot(page, n++);
   }
 
