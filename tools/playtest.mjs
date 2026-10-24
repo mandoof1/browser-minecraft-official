@@ -223,6 +223,36 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'clickfrac') {
+        // fraction of the canvas box, for things that are not buttons (the
+        // world-list row) and that move when the window is a different size
+        const [fx, fy] = arg.split(',').map(Number);
+        const b = await rect();
+        if (b) {
+          const x = b.x + fx * b.w, y = b.y + fy * b.h;
+          console.log(`t+${at()}s clickfrac ${arg} -> page(${Math.round(x)},${Math.round(y)}) canvas=${b.w}x${b.h}`);
+          await page.mouse.move(x, y); await sleep(400);
+          await page.mouse.down(); await sleep(150); await page.mouse.up();
+          await sleep(Number(process.env.AFTER_CLICK || 4000));
+        }
+      }
+      else if (kind === 'clickbtn') {
+        // Mojang's buttons are found by colour, not by remembered coordinates:
+        // the CheerpJ window is not the same height in every run, and a y that
+        // worked in one run lands on Delete in the next.
+        const idx = Number(arg);
+        const buf = await page.screenshot({ encoding: 'binary' });
+        fs.writeFileSync('/tmp/_btn.png', buf);
+        const lines = execFileSync('python3', ['tools/findbuttons.py', '/tmp/_btn.png']).toString().trim().split('\n').filter(Boolean);
+        const parts = (lines[idx] || '').split(' ').map(Number);
+        if (!parts.length || isNaN(parts[0])) { console.log(`   no button #${idx} (found ${lines.length})`); }
+        else {
+          console.log(`t+${at()}s clickbtn #${idx} page(${parts[0]},${parts[1]}) of ${lines[idx]} [${lines.length} buttons]`);
+          await page.mouse.move(parts[0], parts[1]); await sleep(400);
+          await page.mouse.down(); await sleep(150); await page.mouse.up();
+          await sleep(Number(process.env.AFTER_CLICK || 4000));
+        }
+      }
       else { console.log(`unknown action ${a}`); continue; }
       const now = await shot(page, m++);
       console.log(`   screen ${prev === now ? 'UNCHANGED' : 'CHANGED'} after ${a}, luma ${await brightness(page)}`);
