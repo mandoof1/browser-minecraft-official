@@ -100,7 +100,6 @@ class Handler(SimpleHTTPRequestHandler):
         JVM inside FileInputStream.open. So: 204 with no body."""
         self.send_response(204)
         self.send_header("Content-Length", "0")
-        self.isolation_headers()
         self.end_headers()
 
     def do_HEAD(self):
@@ -113,7 +112,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", MIME.get(os.path.splitext(f)[1], "application/octet-stream"))
         self.send_header("Content-Length", str(os.path.getsize(f)))
         self.send_header("Accept-Ranges", "bytes")
-        self.isolation_headers()
         self.end_headers()
 
     def plans(self):
@@ -185,7 +183,6 @@ class Handler(SimpleHTTPRequestHandler):
         # Mojang's files are content-addressed, so they never need revalidating
         if "/objects/" in fpath or "/vanilla/" in fpath:
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
-        self.isolation_headers()
         self.end_headers()
         with open(fpath, "rb") as f:
             f.seek(start)
