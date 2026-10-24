@@ -115,6 +115,26 @@ def call_static_code(target_desc, ref_index):
         return b"\xb8" + ref_index.to_bytes(2, "big") + b"\xb1", 1, 0
     raise SystemExit("--static does not support target descriptor %s" % target_desc)
 
+
+def nonnull_code(target_desc, ref_index, ref_index2):
+    """Bytecode for `return <receiver>.<method>(<args>) != null`.
+
+    Used to replace a existence check that reaches the filesystem with the
+    in-memory answer. Under CheerpJ every java.io.File.isFile() on an /app/ path
+    goes through the async filesystem layer and back, which costs far more than
+    the map lookup it is guarding.
+    """
+    if target_desc != "(Lnf;)Z":
+        raise SystemExit("--nonnull only supports (Lnf;)Z for now")
+    #  0 aload_0 ; 1 aload_1 ; 2 invokevirtual <get> ; 5 invokestatic
+    #  java.util.Objects.nonnull ; 8 ireturn
+    #
+    # No branch: a class file version 52 verifier wants a StackMapTable frame at
+    # every branch target, and synthesizing one is more trouble than the two
+    # extra constant pool entries this costs.
+    return (b"\x2a\x2b\xb6" + ref_index.to_bytes(2, "big")
+            + b"\xb8" + ref_index2.to_bytes(2, "big") + b"\xac"), 2, 2
+
 def patch_code(b, meth, code, max_stack=1, max_locals=2):
     """Replace the Code attribute of `meth` with `code`."""
     off, alen = meth["code"]
@@ -129,13 +149,19 @@ def main():
     src, dst, cls, name, desc = sys.argv[1:6]
     const0 = "--const0" in sys.argv
     static = None
+    nonnull = None
+    if "--nonnull" in sys.argv:
+        i = sys.argv.index("--nonnull")
+        nonnull = sys.argv[i + 1:i + 4]   # class, method, descriptor to call
+        if len(nonnull) != 3:
+            raise SystemExit("--nonnull wants <class> <method> <descriptor>")
     if "--static" in sys.argv:
         i = sys.argv.index("--static")
         static = sys.argv[i + 1:i + 4]   # helper class, helper method, helper desc
         if len(static) != 3:
             raise SystemExit("--static wants <class> <method> <descriptor>")
-    if not const0 and not static:
-        raise SystemExit("--const0 or --static is required")
+    if not const0 and not static and not nonnull:
+        raise SystemExit("--const0, --static or --nonnull is required")
     # iconst_0 ; ireturn  - and for a void method just `return`:
     code = b"\x03\xac" if desc.endswith(")I") else b"\xb1"
     max_stack, max_locals = 1, 2
@@ -149,7 +175,27 @@ def main():
         for m in methods:
             print("  candidate: %s%s" % (m["name"], m["desc"]))
         raise SystemExit("want exactly one %s%s, found %d" % (name, desc, len(hits)))
-    if static:
+    if nonnull:
+        hcls, hname, hdesc = nonnull
+        base = cp_count
+        # Two Methodrefs: the getter on the receiver, and Objects.nonnull.
+        def cp_group(cls, nm, ds, at):
+            return [
+                b"\x01" + len(cls).to_bytes(2, "big") + cls.encode(),
+                b"\x07" + at.to_bytes(2, "big"),
+                b"\x01" + len(nm).to_bytes(2, "big") + nm.encode(),
+                b"\x01" + len(ds).to_bytes(2, "big") + ds.encode(),
+                b"\x0c" + (at + 2).to_bytes(2, "big") + (at + 3).to_bytes(2, "big"),
+                b"\x0a" + (at + 1).to_bytes(2, "big") + (at + 4).to_bytes(2, "big"),
+            ]
+        entries = (cp_group(hcls, hname, hdesc, base)
+                   + cp_group("java/util/Objects", "nonNull", "(Ljava/lang/Object;)Z", base + 6))
+        body, max_stack, max_locals = nonnull_code(desc, base + 5, base + 11)
+        patched = patch_code(raw, hits[0], body, max_stack, max_locals)
+        patched, new_count, _b = append_cp(patched, cp_end, cp_count, entries)
+        # magic(4) minor(2) major(2) constant_pool_count(2) - the count is at 8.
+        patched = patched[:8] + new_count.to_bytes(2, "big") + patched[10:]
+    elif static:
         hcls, hname, hdesc = static
         # Methodref -> Class(name) + NameAndType(name, descriptor).
         # Duplicated Utf8 entries are legal; reusing existing ones would mean
@@ -188,7 +234,8 @@ def main():
                 continue
             data = patched if item.filename == cls else zin.read(item.filename)
             zout.writestr(item, data)
-    what = "const0" if const0 else "call %s.%s%s" % tuple(static)
+    what = "const0" if const0 else ("nonnull %s.%s%s" % tuple(nonnull) if nonnull
+                                    else "call %s.%s%s" % tuple(static))
     print("patched %s: %s%s -> %s in %s (%d -> %d bytes)"
           % (cls, name, desc, what, dst, len(raw), len(patched)))
 
