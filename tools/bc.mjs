@@ -1,0 +1,20 @@
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const puppeteer = require('puppeteer');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const b = await puppeteer.launch({ executablePath: '/usr/bin/brave', headless: true, protocolTimeout: 600000,
+  args: ['--no-sandbox','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader','--window-size=1200,800'] });
+const page = await b.newPage();
+await page.setViewport({ width: 1200, height: 800 });
+const reqs = [];
+page.on('request', r => { const u = r.url(); if (/cjrtnc|\.wasm|\.so|\.js$/.test(u)) reqs.push(u.replace(/^https?:\/\//,'').slice(0,70)); });
+page.on('console', m => { const t = m.text(); if (/Minecraft|LWJGL|Setting user|cheerpj/i.test(t)) console.log('C:', t.slice(0,120)); });
+await page.goto('https://browsercraft.cheerpj.com/', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(e => console.log('nav', String(e).slice(0,80)));
+await sleep(70000);
+console.log('CANVAS:', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('canvas')].map(c => ({w:c.width,h:c.height,id:c.id,cls:c.className})))).slice(0,400));
+console.log('DISPLAY ELS:', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('[id*=heerpj],[class*=cheerpj]')].map(e => ({id:e.id,cls:e.className,st:e.getAttribute('data-status')})))).slice(0,400));
+console.log('FRAMES:', JSON.stringify(page.frames().map(f => f.url().slice(0,60))));
+console.log('CDN REQUESTS:', JSON.stringify([...new Set(reqs.filter(r => r.includes('cjrtnc')))].slice(0,12), null, 0));
+await page.screenshot({ path: 'shots/browsercraft.png' });
+await b.close();

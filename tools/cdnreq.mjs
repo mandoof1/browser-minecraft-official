@@ -1,0 +1,23 @@
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const puppeteer = require('puppeteer');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const PORT = process.env.PORT || '8880';
+const srv = spawn('python3', ['tools/serve.py'], { env: { ...process.env, PORT } });
+await sleep(1200);
+const b = await puppeteer.launch({ executablePath: '/usr/bin/brave', headless: true, protocolTimeout: 900000,
+  args: ['--no-sandbox','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader'] });
+const p = await b.newPage();
+const cdn = new Map(), ours = [];
+p.on('request', r => { const u = r.url();
+  if (u.includes('cjrtnc')) cdn.set(u.replace('https://cjrtnc.leaningtech.com/', ''), r.method());
+  else if (u.includes(`127.0.0.1:${PORT}`)) ours.push(u.replace(`http://127.0.0.1:${PORT}`, '')); });
+p.on('requestfailed', r => console.log('REQFAIL', r.url().replace('https://cjrtnc.leaningtech.com/',''), r.failure()?.errorText));
+await p.goto(`http://127.0.0.1:${PORT}/?version=1.12.2&log=1`, { waitUntil: 'domcontentloaded' });
+await sleep(Number(process.env.BOOT || 100000));
+console.log('CDN:', JSON.stringify([...cdn.keys()]));
+console.log('x11.wasm fetched:', [...cdn.keys()].some(u => u.includes('x11')));
+console.log('awt:', [...cdn.keys()].filter(u => /awt|tzdb|meta-index|ext/.test(u)));
+srv.kill(); await b.close();

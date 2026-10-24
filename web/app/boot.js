@@ -59,6 +59,21 @@ window.mcBoot = (function () {
     return out.join(':');
   }
 
+  /* One patched Mojang class, ahead of client.jar.
+   *
+   * Minecraft's crash reporter captures its own stack with
+   * `new StackTraceElement[Thread.currentThread().getStackTrace().length - 3 - skip]`.
+   * CheerpJ's Java 8 runtime hands back two frames, so that size goes negative
+   * and the reporter dies while building the report - which throws away the
+   * exception that actually broke startup. Neutralising the capture (tools/
+   * patchclass.py) makes Mojang's own crash report, and the real cause inside
+   * it, visible again. Turn it off with ?crashfix=0. */
+  async function crashfixJar(ver) {
+    if (params.get('crashfix') === '0') return null;
+    const p = '/app/client-' + ver + '-webmc.jar';
+    try { return (await fetch(p, { method: 'HEAD' })).ok ? p : null; } catch (e) { return null; }
+  }
+
   async function main() {
     const ver = params.get('version') || '1.12.2';
     setVer(ver);
@@ -78,22 +93,8 @@ window.mcBoot = (function () {
     phase('plan', plan.classpath.length + ' jars, ' + plan.assetObjects + ' assets, java ' + plan.javaMajor);
 
     phase('cheerpj');
-    // Load CheerpJ's runtime with the path pinned, rather than going through
-    // loader.js. The loader derives its own URL by parsing the stack of a thrown
-    // Error; on a deployed site that guess comes back as the page origin, and
-    // CheerpJ then asks *us* for /cj3n8.wasm. This is exactly what loader.js
-    // does internally, with the location stated instead of guessed.
-    const CJ = 'https://cjrtnc.leaningtech.com/4.3';
-    const API = ['cheerpjInit', 'cheerpjRunMain', 'cheerpjRunJar', 'cheerpjRunLibrary',
-      'cheerpjCreateDisplay', 'cjFileBlob', 'cjGetRuntimeResources', 'cheerpjAddStringFile',
-      'cheerpOSAddStringFile', 'cjGetProguardConfiguration', 'dumpMethod', 'dumpClass', 'dumpAllThreads'];
-    const mod = await import(CJ + '/cj3.js');
-    const m = await mod.default({ absPath: CJ + '/cj3.wasm' });
-    for (const k of API) if (typeof m[k] === 'function') self[k] = m[k].bind(m);
-    // loader.js does exactly this, plus attaching its applet observer
-    if (typeof m.cj3AppletInit === 'function') { try { await m.cj3AppletInit(); } catch (e) { /* no applets */ } }
-    self.cheerpjInit = (o) => m.cj3Init(o, CJ, m);
-    if (typeof self.cheerpjInit !== 'function') throw new Error('cj3.js did not expose cj3Init');
+    await loadScript('https://cjrtnc.leaningtech.com/4.3/loader.js');
+    if (typeof cheerpjInit !== 'function') throw new Error('CheerpJ loader did not expose cheerpjInit');
 
     const javaMajor = params.get('java') || (Number(plan.javaMajor) >= 17 ? 17 : 8);
     await cheerpjInit({
@@ -111,7 +112,7 @@ window.mcBoot = (function () {
       libraries: {
         'libGL.so.1': '/app/lwjgl/libraries/gl4es.wasm'
       },
-      enableX11: true
+      enableX11: params.get('x11') !== '0'
     });
     phase('cheerpj', 'jvm ready (java ' + javaMajor + ')');
 
@@ -129,6 +130,11 @@ window.mcBoot = (function () {
       phase('gl2-returned');
       return;
     }
+    if (params.get('probe') === 'npe') {
+      await cheerpjRunMain('webmc.NpeProbe', '/app/probe.jar');
+      phase('npe-probe-returned');
+      return;
+    }
     if (params.get('probe') === 'crash') {
       await cheerpjRunMain('webmc.CrashProbe', '/app/probe.jar:' + classpath(plan, ver));
       phase('crash-probe-returned');
@@ -144,7 +150,8 @@ window.mcBoot = (function () {
       phase('probe-returned');
       return;
     }
-    const cp = classpath(plan, ver);
+    const fix = await crashfixJar(ver);
+    const cp = (fix ? fix + ':' : '') + classpath(plan, ver);
     phase('run', cp.split(':').length + ' classpath entries');
     if (window.mcTelemetry) mcTelemetry.event('classpath', cp);
     await cheerpjRunMain('webmc.Launcher', cp);

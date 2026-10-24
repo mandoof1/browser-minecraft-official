@@ -34,8 +34,10 @@ try {
   await page.goto(`http://127.0.0.1:${PORT}/?${Q}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
   await sleep(WAIT);
   await page.screenshot({ path: path.join(ROOT, 'shots', NAME + '.png') });
-  console.log('--- all console lines (tail 40) ---');
-  for (const l of all.slice(-40)) console.log('  ' + String(l).slice(0, 200));
+  fs.mkdirSync('shots', { recursive: true });
+  fs.writeFileSync(`shots/${NAME}-console.log`, all.join('\n') + '\n');
+  console.log('--- console: ' + all.length + ' lines (full copy in shots/' + NAME + '-console.log) ---');
+  for (const l of all.slice(-60)) console.log('  ' + String(l).slice(0, 300));
 } finally {
   try { await browser?.close(); } catch {}
   server.kill('SIGTERM');

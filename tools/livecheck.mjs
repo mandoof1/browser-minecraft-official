@@ -29,9 +29,12 @@ check(health?.vanilla?.[VER]?.clientSha1 === '0f275bc1547d01fa5f56ba34bdc87d981e
 const res = await fetch(`${BASE}/`);
 const raw = res.headers.getSetHeader ? res.headers.getSetHeader() : [...res.headers.entries()];
 const count = (n) => raw.filter(([k]) => k.toLowerCase() === n).length;
-check(count('cross-origin-opener-policy') === 1, 'COOP sent once', String(count('cross-origin-opener-policy')));
-check(count('cross-origin-embedder-policy') === 1, 'COEP sent once', String(count('cross-origin-embedder-policy')));
+check(count('cross-origin-opener-policy') === 1, 'COOP sent exactly once', String(count('cross-origin-opener-policy')));
 check(res.headers.get('cross-origin-opener-policy') === 'same-origin', 'COOP value', res.headers.get('cross-origin-opener-policy'));
+// COEP must be absent, not merely once: a duplicated COEP is joined into the
+// invalid value "require-corp, require-corp", which silently disables isolation
+// - and that is exactly what made the port work while it looked broken.
+check(count('cross-origin-embedder-policy') === 0, 'COEP absent (CheerpJ needs its OS iframe unblocked)', String(count('cross-origin-embedder-policy')));
 
 // 3. Range: CheerpJ over-requests a 128 KiB window for small files; the server
 // must clamp what it advertises, not just what it sends.
@@ -66,7 +69,7 @@ try {
   const phases = await page.evaluate(() => (window.mcBoot ? mcBoot.phases() : {})).catch(() => ({}));
   say('     phases:', JSON.stringify(phases));
   const isolated = await page.evaluate(() => self.crossOriginIsolated).catch(() => null);
-  check(isolated === true, 'crossOriginIsolated in the page', String(isolated));
+  check(isolated === false, 'page not cross-origin isolated (deliberate, see serve.py)', String(isolated));
   fs.mkdirSync(path.join(process.cwd(), 'shots'), { recursive: true });
   await page.screenshot({ path: path.join(process.cwd(), 'shots', 'live.png') });
   say('     shot: shots/live.png');

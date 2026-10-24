@@ -41,7 +41,7 @@ done
 LW="$(pwd)/vendor/browsercraft/static/lwjgl"
 LWJ="$LW/lwjgl-2.9.3.jar:$LW/lwjgl_util-2.9.3.jar"
 mkdir -p build/probeclasses
-"$JDK/bin/javac" --release 8 -cp "$LWJ" -d build/probeclasses probe/webmc/GlProbe.java probe/webmc/FileProbe.java probe/webmc/CrashProbe.java probe/webmc/GlProbe2.java 2>&1 | head -5
+"$JDK/bin/javac" --release 8 -cp "$LWJ" -d build/probeclasses probe/webmc/GlProbe.java probe/webmc/FileProbe.java probe/webmc/CrashProbe.java probe/webmc/GlProbe2.java probe/webmc/NpeProbe.java 2>&1 | head -5
 "$JDK/bin/jar" --create --file build/probe.jar --main-class webmc.GlProbe -C build/probeclasses .
 echo "[build] build/probe.jar"
 
@@ -53,6 +53,17 @@ mkdir -p build/fixclasses
 cp "$LW/lwjgl-2.9.3.jar" build/lwjgl-2.9.3-webmc.jar
 (cd build/fixclasses && "$JDK/bin/jar" --update --file ../lwjgl-2.9.3-webmc.jar org/lwjgl/opengl/APIUtil.class)
 echo "[build] build/lwjgl-2.9.3-webmc.jar (org.lwjgl.opengl.APIUtil rewind fix inside)"
+
+# Two patched Mojang classes, in a copy of their own jar (the fetched client.jar
+# stays byte-for-byte what piston served). tools/patchclass.py explains why.
+VER="${VER:-1.12.2}"
+V="data/vanilla/$VER"
+if [ -f "$V/client.jar" ]; then
+  python3 tools/patchclass.py "$V/client.jar" build/client.tmp.jar c.class a "(I)I" --const0
+  python3 tools/patchclass.py build/client.tmp.jar build/client-"$VER"-webmc.jar bvu.class b "(Ljava/util/Map;)V" --const0
+  rm -f build/client.tmp.jar
+  echo "[build] build/client-$VER-webmc.jar (crash-report stack capture + model cycle check neutralised)"
+fi
 
 # Stage the WebAssembly GL/LWJGL runtime that CheerpJ loads for Mojang's LWJGL 2
 # jars (Minecraft up to 1.12.2 uses LWJGL 2). Leaning Technologies' browsercraft

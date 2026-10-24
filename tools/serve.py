@@ -80,7 +80,16 @@ class Handler(SimpleHTTPRequestHandler):
 
     def isolation_headers(self):
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+        if os.environ.get("COEP", "0") == "1":
+            self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+        # No Cross-Origin-Embedder-Policy, deliberately. COEP would give us
+        # SharedArrayBuffer, but it also blocks cross-origin iframes that do not
+        # opt in, and CheerpJ renders the AWT/X11 display in exactly such an
+        # iframe (https://cjrtnc.leaningtech.com/4.3/c.html). The request dies as
+        # net::ERR_BLOCKED_BY_RESPONSE and cheerpjRunMain then waits forever with
+        # no error anywhere. Java 8 Minecraft does not need SharedArrayBuffer, so
+        # isolation costs more than it buys. COOP alone is harmless and keeps the
+        # document in its own browsing group.
         self.send_header("Permissions-Policy", "cross-origin-isolated=(self)")
 
     def end_headers(self):
