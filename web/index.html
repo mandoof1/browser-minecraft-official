@@ -9,11 +9,16 @@
   body { margin:0; background:#111; color:#ddd; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
   #wrap { display:flex; flex-direction:column; align-items:center; gap:10px; padding:14px; }
   #bar { display:flex; gap:14px; flex-wrap:wrap; align-items:center; width:min(1180px,100%); }
-  #game { width:min(1180px,100%); height:min(68vh,760px); background:#000; position:relative; overflow:hidden; border:1px solid #262626; }
-  #log { width:min(1180px,100%); white-space:pre-wrap; background:#0b0b0b; border:1px solid #262626; padding:8px; max-height:34vh; overflow:auto; }
+  #game { width:min(856px,100%); height:min(502px,calc(100vh - 120px)); background:#000; position:relative; overflow:hidden; border:1px solid #262626; margin:0 auto; }
+  /* The Java log is a debugging view, not part of the page. ?log=1 turns it on. */
+  #log { display:none; width:min(1180px,100%); white-space:pre-wrap; background:#0b0b0b; border:1px solid #262626; padding:8px; max-height:34vh; overflow:auto; }
+  body.showlog #log { display:block; }
   body.theater #wrap { padding:0; gap:0; }
   body.theater #log, body.theater small, body.theater #bar, body.theater h1 { display:none; }
-  body.theater #game { width:100vw; height:100vh; border:0; }
+  body.theater #game { width:100vw; height:100vh; border:0; max-width:none; }
+  /* CheerpJ positions its window absolutely inside the display element; centring
+     it is what stops the game sitting in the left third of a wide page. */
+  #game > .cjWindow { left:50% !important; transform:translateX(-50%); }
   .k { color:#888; } .ok { color:#7bd88f; } .err { color:#ff7b72; } .dim { color:#666; } .java { color:#c8a24a; }
   h1 { font-size:15px; margin:4px 0; font-weight:600; }
   small { color:#777; max-width:min(1180px,100%); }
@@ -33,12 +38,12 @@
   <div id=game></div>
   <div id=log></div>
   <small>
-    The game is Mojang&rsquo;s own <code>client.jar</code>, downloaded from Mojang and run
-    <em>unmodified</em> on a WebAssembly JVM (CheerpJ). Nothing here is a decompile or a
-    reimplementation: the browser layer we wrote is the launcher, the classpath, the launch
-    arguments, the asset pipeline and the hosting. Query params:
-    <code>?version=1.12.2</code> &middot; <code>?theater=1</code> &middot;
-    <code>?java=8|17</code> &middot; <code>?log=1</code> (Java console on the page).
+    Mojang&rsquo;s own <code>client.jar</code>, downloaded from Mojang and run on a
+    WebAssembly JVM (CheerpJ): not a decompile, not a reimplementation. The browser
+    layer we wrote is the launcher, the classpath, the launch arguments, the asset
+    pipeline, the hosting and a handful of method-body patches to Mojang&rsquo;s own
+    bytecode (see the README). <code>?version=1.12.2</code> &middot;
+    <code>?theater=1</code> &middot; <code>?log=1</code> (Java console on the page).
   </small>
 </div>
 <script src="app/preload.js"></script>

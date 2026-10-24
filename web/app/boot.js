@@ -20,9 +20,21 @@ window.mcBoot = (function () {
   const phases = {};
   let plan = null;
 
+  // The stage line is user-facing. Internal phase names and counts belong in the
+  // console and in ?log=1, not in the header of a page someone is trying to play.
+  const LABELS = {
+    plan: name => 'Mojang ' + name,
+    cheerpj: () => 'Java 8 running',
+    warm: () => 'Loading game files',
+    display: () => 'Window ready',
+    run: () => 'Starting Minecraft',
+    missing: () => 'Mojang files not fetched yet',
+  };
+
   function phase(name, detail) {
     phases[name] = { t: Math.round(performance.now()), detail: detail || null };
-    stage(name + (detail ? ' ' + detail : ''));
+    const label = LABELS[name] ? LABELS[name](plan && plan.version ? plan.version : '') : null;
+    stage(label !== null ? label : 'Starting the game');
     if (window.mcTelemetry) mcTelemetry.event('phase', name + (detail ? ' ' + detail : ''));
     console.log('[boot] ' + name + (detail ? ' ' + detail : ''));
   }
@@ -85,6 +97,9 @@ window.mcBoot = (function () {
   async function main() {
     const ver = params.get('version') || '1.12.2';
     setVer(ver);
+    // ?mc=1.2.5 is the control target (Leaning Technologies' demo game) run
+    // through our stack; the header should say what is actually on screen.
+    if (params.get('mc')) setVer(params.get('mc') + ' (control)');
     if (params.get('theater') === '1') document.body.classList.add('theater');
     if (params.get('log') === '1') document.body.classList.add('showlog');
 
