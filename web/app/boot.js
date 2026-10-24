@@ -155,6 +155,7 @@ window.mcBoot = (function () {
         'webmc.gameDir=/files/minecraft',
         'webmc.variant=' + (params.get('variant') || 'minimal'),
         'webmc.warm=' + (params.get('warm') === '1' ? '1' : '0'),
+        'webmc.useVbo=' + (params.get('vbo') === '0' ? 'false' : 'true'),
         'mc.version=' + ver
       ],
       libraries: {

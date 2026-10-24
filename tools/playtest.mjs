@@ -139,6 +139,7 @@ print(tot // max(1, n))
   const doKey = async (k) => {
     const b = await rect();
     if (b) await page.mouse.move(b.x + b.w / 2, b.y + b.h / 2);
+    if (k.startsWith('press:')) { await page.keyboard.press(k.slice(6)); await sleep(2500); return; }
     await page.keyboard.down(k); await sleep(600); await page.keyboard.up(k);
     await sleep(2500);
   };

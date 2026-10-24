@@ -122,7 +122,9 @@ public final class Launcher {
 			// keys are exactly as Mojang's own GameSettings parses them
 			"lang:en_us",
 			"fboEnable:false",
-			"useVbo:false",
+			// Mojang's own default is VBOs on. CheerpJ/gl4es still has to survive
+			// glGenBuffers, so this stays switchable for A/B runs (?vbo=0).
+			"useVbo:" + System.getProperty("webmc.useVbo", "true"),
 			"fancyGraphics:false",
 			"ao:false",
 			"particles:0",
