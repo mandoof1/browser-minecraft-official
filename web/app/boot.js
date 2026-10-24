@@ -78,14 +78,22 @@ window.mcBoot = (function () {
     phase('plan', plan.classpath.length + ' jars, ' + plan.assetObjects + ' assets, java ' + plan.javaMajor);
 
     phase('cheerpj');
-    // The loader otherwise derives the runtime location by parsing the stack of
-    // a thrown Error to find its own script URL. On a deployed site that guess
-    // can come out as the page origin, and CheerpJ then asks *us* for
-    // /cj3n8.wasm. The loader checks this global first, so pin it.
+    // Load CheerpJ's runtime with the path pinned, rather than going through
+    // loader.js. The loader derives its own URL by parsing the stack of a thrown
+    // Error; on a deployed site that guess comes back as the page origin, and
+    // CheerpJ then asks *us* for /cj3n8.wasm. This is exactly what loader.js
+    // does internally, with the location stated instead of guessed.
     const CJ = 'https://cjrtnc.leaningtech.com/4.3';
-    self.cj3LoaderPath = CJ;
-    await loadScript(CJ + '/loader.js');
-    if (typeof cheerpjInit !== 'function') throw new Error('CheerpJ loader did not expose cheerpjInit');
+    const API = ['cheerpjInit', 'cheerpjRunMain', 'cheerpjRunJar', 'cheerpjRunLibrary',
+      'cheerpjCreateDisplay', 'cjFileBlob', 'cjGetRuntimeResources', 'cheerpjAddStringFile',
+      'cheerpOSAddStringFile', 'cjGetProguardConfiguration', 'dumpMethod', 'dumpClass', 'dumpAllThreads'];
+    const mod = await import(CJ + '/cj3.js');
+    const m = await mod.default({ absPath: CJ + '/cj3.wasm' });
+    for (const k of API) if (typeof m[k] === 'function') self[k] = m[k].bind(m);
+    // loader.js does exactly this, plus attaching its applet observer
+    if (typeof m.cj3AppletInit === 'function') { try { await m.cj3AppletInit(); } catch (e) { /* no applets */ } }
+    self.cheerpjInit = (o) => m.cj3Init(o, CJ, m);
+    if (typeof self.cheerpjInit !== 'function') throw new Error('cj3.js did not expose cj3Init');
 
     const javaMajor = params.get('java') || (Number(plan.javaMajor) >= 17 ? 17 : 8);
     await cheerpjInit({
