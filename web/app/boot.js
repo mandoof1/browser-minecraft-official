@@ -174,6 +174,16 @@ window.mcBoot = (function () {
     await cheerpjCreateDisplay(-1, -1, $('game'));
     phase('display');
 
+    if (params.get('probe') === 'persist') {
+      await cheerpjRunMain('webmc.PersistProbe', '/app/probe.jar');
+      phase('persist-returned');
+      return;
+    }
+    if (params.get('probe') === 'saves') {
+      await cheerpjRunMain('webmc.SaveProbe', '/app/probe.jar');
+      phase('saves-returned');
+      return;
+    }
     if (params.get('probe') === 'crashdump') {
       await cheerpjRunMain('webmc.CrashDump', '/app/probe.jar');
       phase('crashdump-returned');

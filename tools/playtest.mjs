@@ -223,6 +223,40 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'reload') {
+        // The question a player actually asks: press F5, is the world still
+        // there? Same tab, same origin, so CheerpJ's IndexedDB-backed /files/
+        // has to answer.
+        console.log(`t+${at()}s reload (same tab, same origin)`);
+        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        const w0 = Date.now();
+        while (Date.now() - w0 < Number(process.env.WINDOW_WAIT || 200000)) {
+          if (await page.evaluate(() => document.querySelectorAll('.cjWindow canvas').length > 0).catch(() => false)) break;
+          await sleep(4000);
+        }
+        console.log(`  window back at t+${at()}s`);
+      }
+      else if (kind === 'waittitle') {
+        let bright = -1, hits = 0;
+        while (Date.now() - t0 < Number(process.env.TITLE_WAIT || 600000)) {
+          bright = await brightness(page);
+          hits = (bright >= 10 && bright < 200) ? hits + 1 : 0;
+          if (hits >= 2) break;
+          await sleep(4000);
+        }
+        console.log(`  title reached again at t+${at()}s (luma ${bright})`);
+      }
+      else if (kind === 'waitworld') {
+        const want = /Changing view distance to|Preparing spawn area: 100/;
+        const mark = con.length;
+        const w0 = Date.now();
+        let hit = null;
+        while (Date.now() - w0 < Number(process.env.WORLD_WAIT || 500000) && !hit) {
+          hit = con.slice(mark).find(l => want.test(l)) || null;
+          if (!hit) await sleep(3000);
+        }
+        console.log(`  world ${hit ? 'loaded' : 'NOT seen'} at t+${at()}s${hit ? ': ' + hit.slice(0, 90) : ''}`);
+      }
       else if (kind === 'waitluma') {
         // The client's own loading screen outlasts the integrated server's
         // "world loaded" line, so the usable marker is the frame going bright:
