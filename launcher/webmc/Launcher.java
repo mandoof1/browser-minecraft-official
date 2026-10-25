@@ -66,6 +66,20 @@ public final class Launcher {
 		// that names the failing layer - stays inside the persistent filesystem.
 		// A daemon thread that prints new reports as they appear does not depend
 		// on anyone getting a chance to return.
+		// Mojang's NativeImage casts a raster buffer to DataBufferInt, and in a
+		// loaded world the client dies with NoClassDefFoundError for exactly that
+		// class about 90 s in - while the same class works fine from a probe. The
+		// difference is context: by then the GL and AWT threads exist. Force the
+		// whole path to initialize here, where it is known to work, so the game
+		// thread never has to be the one that loads it.
+		try {
+			Class<?> dbi = Class.forName("java.awt.image.DataBufferInt");
+			Object raster = new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+					.getRaster().getDataBuffer();
+			System.out.println("[webmc] pre-loaded " + dbi.getName() + " raster=" + raster.getClass().getName());
+		} catch (Throwable t) {
+			System.out.println("[webmc] could not pre-load AWT image path: " + t);
+		}
 		watchCrashReports(args);
 		Method main = game.getMethod("main", String[].class);
 		System.out.println("[webmc] calling " + mainClass + ".main - this is Mojang's own bytecode");
