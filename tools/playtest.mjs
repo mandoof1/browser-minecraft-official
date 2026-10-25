@@ -226,6 +226,11 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'shot') {
+        const i = n++;
+        await shot(page, i);
+        console.log(`t+${at()}s shot shots/play-${String(i).padStart(2, '0')}-${TAG}.png luma ${await brightness(page)}`);
+      }
       else if (kind === 'ticks') {
         // The game's own report of a starved loop. Mojang prints
         //   Can't keep up! ... Running Nms behind, skipping M tick(s)
