@@ -262,6 +262,8 @@ JVM runs on the page's main thread. So the tick warnings are the load metric.
 | distance 6, 60 fps cap | 329 s | 509 s | 4 | 1449 |
 | distance 4, 30 fps cap | 329 s | 519 s | 1 | 1249 |
 | distance 4, 30 fps, no preload | 319 s | 563 s | 2 | 1113 |
+| distance 4, 30 fps, no preload, VBOs off | 364 s | 519 s | 1 | 702 |
+| distance 4, 30 fps, framebuffers on | title not reached in 900 s | - | - | - |
 | distance 4, 30 fps, X11 off | window at 302 s | title not reached in 818 s | - | - |
 
 What that changed:
@@ -275,6 +277,13 @@ What that changed:
   own reads for CPU on a free-tier host.
 * **X11 stays on.** Disabling it still produces a window, but the client never
   finishes booting - measured, not guessed.
+* **`fboEnable` stays false.** Turning it on made the client never reach its own
+  title screen inside 900 s, against ~330 s with it off. The framebuffer path is
+  still the thing gl4es is worst at, even after the `APIUtil` scratch-buffer fix.
+* **`useVbo` defaults to false.** Mojang's VBO path costs the integrated server:
+  same settings otherwise, VBOs on gave two warnings and 1113 skipped ticks in
+  120 s, VBOs off gave one warning and 702, with the worst lag halved. Startup is
+  ~40 s slower. `?vbo=1` puts it back.
 * **Realms is answered locally.** `pc.realms.minecraft.net` is cross-origin and
   the client asks for it over and over, each ask becoming a CORS failure on the
   main thread. `cjFetch` now returns a 502 for it immediately; the session log
