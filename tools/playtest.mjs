@@ -226,6 +226,27 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'frames') {
+        // Frames per second measured from outside the page. CheerpJ presents the
+        // game inside its own display layer, so neither putImageData nor
+        // glFinish in our realm sees the swap; a screenshot does. Capture as
+        // fast as the page will answer and count distinct images: that is a
+        // lower bound on the frame rate, but it is the same lower bound in every
+        // run, which is what an A/B comparison needs.
+        const ms = Number(arg) || 10000;
+        const hashes = new Set();
+        const t0 = Date.now();
+        let shots = 0;
+        while (Date.now() - t0 < ms) {
+          const buf = await page.screenshot({ encoding: 'binary' }).catch(() => null);
+          if (!buf) break;
+          shots++;
+          hashes.add(crypto.createHash('sha1').update(buf).digest('hex'));
+        }
+        const secs = (Date.now() - t0) / 1000;
+        console.log(`t+${at()}s frames over ${secs.toFixed(1)}s: ${hashes.size} distinct of ${shots} captures`
+          + ` = >=${Math.round(hashes.size / secs * 10) / 10} fps`);
+      }
       else if (kind === 'fps') {
         // Frames the game actually presented per second, sampled over arg ms.
         const ms = Number(arg) || 10000;
