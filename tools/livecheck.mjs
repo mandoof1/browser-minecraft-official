@@ -7,10 +7,12 @@
 //   node tools/livecheck.mjs https://browser-minecraft-official.onrender.com
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const puppeteer = require('puppeteer-core');
 
+const ROOT = path.resolve(import.meta.dirname, '..');
 const BASE = (process.argv[2] || 'https://browser-minecraft-official.onrender.com').replace(/\/$/, '');
 const VER = process.argv[3] || '1.12.2';
 const WAIT = Number(process.env.WAIT || 180000);
@@ -45,6 +47,17 @@ check(r.status === 206, 'Range -> 206', String(r.status));
 check(body.length === 781, 'body is the whole small file', `${body.length} bytes`);
 check(Number(r.headers.get('content-length')) === body.length, 'content-length matches bytes sent', r.headers.get('content-length'));
 check(r.headers.get('content-range') === 'bytes 0-780/781', 'content-range clamped', r.headers.get('content-range'));
+
+// 3b. the patched client jar. serve.py regenerates it at boot, and its inline
+// patch chain drifted from tools/patch-client.sh: Render served a jar with the
+// crash patch but without the Netty and AssetIndex ones, so a generated world
+// died the moment it finished loading while every local run was fine. Hashing
+// the patched classes against the local build is how that gets caught here
+// rather than by a human staring at a black screen.
+const jar = spawnSync('python3', [path.join(ROOT, 'tools', 'checkjar.py'), BASE, VER],
+  { encoding: 'utf8', timeout: 120000 });
+check(jar.status === 0, 'deployed client jar carries every patch',
+  (jar.stdout || jar.stderr || '').trim().split('\n').filter(l => l.includes('DIFFERS') || l.startsWith('ok:')).join(' | ').slice(0, 160));
 
 // 4. boot the live page and wait for Mojang's own log
 const browser = await puppeteer.launch({
