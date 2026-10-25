@@ -130,7 +130,12 @@ window.mcBoot = (function () {
     // preload that actually pays. Asset objects are small and numerous, and
     // timing showed their cost is CheerpJ's per-file filesystem overhead rather
     // than the fetch, so preloading all 1305 of them changes little.
-    const warm = params.get('warm') || 'jars';
+    // Measured: preloading the classpath makes the boot *slower*, not faster.
+    // This origin is HTTP/1.1, so the browser allows six connections at a time,
+    // and 70 preload entries expand to hundreds of range requests that the
+    // JVM's own startup reads then queue behind. ?warm=jars keeps it available
+    // for experiments; the default is to preload only CheerpJ's runtime.
+    const warm = params.get('warm') || 'none';
     if (warm !== '0' && warm !== 'assets') {
       const blocks = (size) => {
         const out = [];
