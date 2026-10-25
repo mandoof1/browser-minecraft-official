@@ -23,7 +23,7 @@ fs.mkdirSync(path.dirname(acc), { recursive: true });
 const srv = process.env.EXTERNAL ? null : spawn('python3', [path.join(ROOT, 'tools', 'serve.py'), String(PORT)],
   { cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'] });
 let log = '';
-srv.stderr.on('data', d => { log += d; });
+if (srv) srv.stderr.on('data', d => { log += d; });
 if (!srv) { await fetch(BASE + '/health'); } else for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break; } catch {} await sleep(250); }
 
 const browser = await puppeteer.launch({
