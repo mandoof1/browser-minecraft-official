@@ -284,7 +284,12 @@ window.mcBoot = (function () {
         'webmc.gameDir=/files/minecraft',
         'webmc.variant=' + (params.get('variant') || 'minimal'),
         'webmc.warm=' + (params.get('warm') === '1' ? '1' : '0'),
-        'webmc.useVbo=' + (params.get('vbo') === '0' ? 'false' : 'true'),
+        // Measured on the deployed host at the same settings otherwise: with
+        // Mojang's VBO path on, 120 s in a loaded world produced two of Mojang's
+        // 'Can't keep up!' warnings and 1113 skipped ticks; with it off, one
+        // warning and 702, and the worst lag halved. Startup costs about 40 s
+        // more, which is the worse half of that trade. ?vbo=1 puts it back on.
+        'webmc.useVbo=' + (params.get('vbo') === '1' ? 'true' : 'false'),
         // Measured on the deployed host, same session shape, 120 s in a loaded
         // world: render distance 6 with a 60 fps cap produced four of Mojang's
         // "Can't keep up!" warnings; distance 4 with a 30 fps cap produced one.
