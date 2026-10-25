@@ -111,7 +111,11 @@ window.mcBoot = (function () {
     [/textures-atlas/, 52, 'Building the texture atlas'],
     [/Starting game/, 60, 'Starting the game'],
     [/Starting (integrated|local) server/, 68, 'Starting the server'],
-    [/Changing view distance to/, 92, 'Building terrain'],
+    // 'Changing view distance to N' is the client's own signal that the world is
+    // live. Mojang stops printing the spawn-area percentage at about the same
+    // moment, so without this the bar sits at "Generating world 99%" while the
+    // player is already walking around.
+    [/Changing view distance to/, 100, 'In world'],
   ];
   const SPAWN = /Preparing spawn area: (\d+)%/;
 
@@ -127,13 +131,16 @@ window.mcBoot = (function () {
           if (re.test(line) && p > pct) { pct = p; label = name; }
         }
         const m = SPAWN.exec(line);
-        if (m) { pct = 70 + Math.min(22, Math.round(Number(m[1]) * 0.22)); label = 'Generating world ' + m[1] + '%'; }
+        // Only while still generating; otherwise a stale spawn line pulls the
+        // completed bar back to 99%.
+        if (m && pct < 100) { pct = 70 + Math.min(22, Math.round(Number(m[1]) * 0.22)); label = 'Generating world ' + m[1] + '%'; }
         if (/\[(Client thread|Server thread)\/INFO\]/.test(line)) newest = line.replace(/^\[[\d:]+\]\s*/, '').slice(0, 60);
       }
       if (pct === lastPct && !newest) return;
       lastPct = pct;
-      bar.hidden = false;
-      bar.value = pct;
+      // Once the player is in the world the bar has nothing left to say.
+      if (pct >= 100) { bar.hidden = true; }
+      else { bar.hidden = false; bar.value = pct; }
       const e = $('stage');
       if (e && label) e.textContent = label;
       const s = $('stats');
