@@ -70,11 +70,16 @@ window.mcTelemetry = (function () {
    * createImageBitmap), so counting those calls on the game canvas is counting
    * the frames the game actually presented. */
   let paints = 0, paintSamples = [];
+  // A DOM query per call would be silly: this wraps every pixel blit the page
+  // makes. Resolve each canvas once and remember it.
+  const canvasIsGame = new WeakMap();
   const isGameCanvas = (c) => {
-    if (!c || c.id !== 'cjCanvas' && !(c.className || '').toString().match(/cjSwapped|cjCanvas/)) {
-      return !!(c.closest && c.closest('#game'));
-    }
-    return true;
+    if (!c) return false;
+    if (canvasIsGame.has(c)) return canvasIsGame.get(c);
+    const v = !!(c.className || '').toString().match(/cjSwapped|cjCanvas/) ||
+      !!(c.closest && c.closest('#game'));
+    canvasIsGame.set(c, v);
+    return v;
   };
   for (const proto of [CanvasRenderingContext2D.prototype, OffscreenCanvasRenderingContext2D && OffscreenCanvasRenderingContext2D.prototype].filter(Boolean)) {
     for (const name of ['putImageData', 'drawImage']) {
