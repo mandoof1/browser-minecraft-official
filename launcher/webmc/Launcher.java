@@ -185,7 +185,14 @@ public final class Launcher {
 			out.println(line);
 		}
 		out.close();
-		System.out.println("[webmc] wrote " + opts + " (" + lines.length + " settings, fboEnabled=false)");
+		// Print what was actually written, not what the code used to hardcode:
+		// the values are read from system properties now, and a stale claim in
+		// the log is how an A/B run gets misread.
+		System.out.println("[webmc] wrote " + opts + " (" + lines.length + " settings, "
+				+ "fboEnable=" + System.getProperty("webmc.fbo", "false")
+				+ " useVbo=" + System.getProperty("webmc.useVbo", "true")
+				+ " renderDistance=" + System.getProperty("webmc.rd", "4")
+				+ " maxFps=" + System.getProperty("webmc.maxFps", "30") + ")");
 	}
 
 	/**
