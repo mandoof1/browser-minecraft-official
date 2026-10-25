@@ -233,11 +233,20 @@ window.mcBoot = (function () {
     // read inside CheerpJ's filesystem is a stalled JVM with no error anywhere.
     // Retry with a jittered, doubling wait instead: the same shape the GTA V
     // browser port uses against an overloaded host.
-    const cjFetch = async (...a) => {
+    const cjFetch = async (input, init) => {
+      // CheerpJ asks for these with its own cache mode, which re-fetches
+      // everything on every load. Mojang's asset objects are named by their own
+      // SHA-1, so re-asking for them is pure cost: force the browser cache on
+      // for the paths that cannot change, and leave the rest to revalidate by
+      // ETag.
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      init = Object.assign({}, init || {});
+      if (/\/assets\/objects\/|[?&]v=/.test(url)) init.cache = 'force-cache';
+      else if (/\.jar$|\.wasm$|\/indexes\//.test(url)) init.cache = 'default';
       let last;
       for (let attempt = 0; attempt < 6; attempt++) {
         try {
-          const r = await fetch(...a);
+          const r = await fetch(url || input, init);
           if (r.ok || r.status === 204 || r.status === 304) return r;
           last = new Error('HTTP ' + r.status);
         } catch (e) { last = e; }
