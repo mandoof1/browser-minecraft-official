@@ -364,11 +364,33 @@ What is left:
 - **Waiting on it.** An interpreted 1.12.2 takes 2-12 minutes to reach its own
   menu on this machine depending on what else is running, and world generation
   outlasts that. `tools/playtest.mjs` therefore waits on evidence rather than
-  sleeps: the loading screen is a dark dirt pan and a loaded world is sky and
-  terrain, so luminance of the game area is the marker.
-- **Block interaction and saving.** Mining, placing, the inventory screen and
-  quitting to a title screen and rejoining the same world are not yet verified
-  end to end.
+  sleeps: Mojang's own `Changing view distance to 6` line is the marker that a
+  world is up, and luminance of the game area separates the loading pan from
+  sky and terrain.
+- **A crash that is not yet fixed.** Sitting in a loaded world, the client
+  sometimes dies about 90 s later with
+  `java.lang.NoClassDefFoundError: java/awt/image/DataBufferInt`, immediately
+  after gl4es logs `ReadPixels error: (GL_BGRA, UNSIGNED_BYTE -> ...)`. It is
+  intermittent: the same session can run for four minutes without it. CheerpJ
+  prints no frames for it, and `probe/webmc/AwtImageProbe.java` shows
+  `DataBufferInt`, `BufferedImage` and `IntegerInterleavedRaster` all working
+  on their own, so the failure is contextual, not a missing class. The only
+  class in Mojang's 1.12.2 that touches `DataBufferInt` is `buz` (`NativeImage`),
+  whose `a(BufferedImage)` does `getRaster().getDataBuffer()` then `checkcast
+  DataBufferInt` - the level-icon / framebuffer-readback path.
+  `Launcher.watchCrashReports` now prints Mojang's own report from a daemon
+  thread so the stack is captured even when CheerpJ takes the JVM with it.
+- **Saving works; rejoining is still flaky in the harness.**
+  `probe/webmc/PersistProbe.java` writes a marker under `/files/minecraft` and
+  `tools/persisttest.mjs` reloads the page in the same tab: the second load
+  reads the first run's bytes back, so CheerpJ's IndexedDB-backed filesystem
+  does survive a reload. Note that two *separate* browser launches on
+  different ports are different origins and therefore different IndexedDB
+  stores - that is why an earlier version of this test looked like saves were
+  vanishing. `tools/playtest.mjs` now drives the reload itself
+  (`reload;waittitle;...`) and the world list is found by shape with
+  `tools/findbuttons.py` rather than by fixed coordinates, because the CheerpJ
+  window height changes between runs.
 - **Sound.** `Unable to initialize OpenAL. Probable cause: OpenAL not supported.`
   The client falls back to its own silent mode. Leaning Technologies' own
   Minecraft demo has the same limitation - Browsercraft ships no OpenAL.
@@ -377,6 +399,10 @@ What is left:
   non-constant expression`), so the `entity_outline` post-processing effect
   fails to load. It is a warning, not a crash.
 - **Realms** tries to reach `pc.realms.minecraft.net` and is blocked by CORS.
+- **Frame rate.** `tools/fps.mjs` counts frames by wrapping the GL flush, and
+  measures about 13 fps on the 1.2.5 control target. 1.12.2 is slower still,
+  and the integrated server says so: `Can't keep up! ... Running 6721ms
+  behind, skipping 134 tick(s)`.
 
 ### Version notes
 
