@@ -280,8 +280,15 @@ window.mcBoot = (function () {
         'webmc.variant=' + (params.get('variant') || 'minimal'),
         'webmc.warm=' + (params.get('warm') === '1' ? '1' : '0'),
         'webmc.useVbo=' + (params.get('vbo') === '0' ? 'false' : 'true'),
-        'webmc.rd=' + (params.get('rd') || '6'),
-        'webmc.maxFps=' + (params.get('fps') || '60'),
+        // Measured on the deployed host, same session shape, 120 s in a loaded
+        // world: render distance 6 with a 60 fps cap produced four of Mojang's
+        // "Can't keep up!" warnings; distance 4 with a 30 fps cap produced one.
+        // On a single-threaded WebAssembly JVM the render loop competes with the
+        // integrated server for the same thread, so a smaller view and a lower
+        // cap buy the part that has to run at a fixed 20 ticks per second.
+        // ?rd= and ?fps= raise them again.
+        'webmc.rd=' + (params.get('rd') || '4'),
+        'webmc.maxFps=' + (params.get('fps') || '30'),
         'webmc.fbo=' + (params.get('fbo') === '1' ? 'true' : 'false'),
         'mc.version=' + ver
       ],
