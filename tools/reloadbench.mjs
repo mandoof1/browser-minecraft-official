@@ -17,13 +17,14 @@ const PORT = Number(process.env.PORT || 9710);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const EXEC = '/usr/bin/brave';
 
+const BASE = process.env.BASE || `http://127.0.0.1:${PORT}`;
 const acc = path.join(ROOT, 'shots', 'reloadbench-access.log');
 fs.mkdirSync(path.dirname(acc), { recursive: true });
-const srv = spawn('python3', [path.join(ROOT, 'tools', 'serve.py'), String(PORT)],
+const srv = process.env.EXTERNAL ? null : spawn('python3', [path.join(ROOT, 'tools', 'serve.py'), String(PORT)],
   { cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'] });
 let log = '';
 srv.stderr.on('data', d => { log += d; });
-for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break; } catch {} await sleep(250); }
+if (!srv) { await fetch(BASE + '/health'); } else for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break; } catch {} await sleep(250); }
 
 const browser = await puppeteer.launch({
   executablePath: EXEC, headless: 'new', protocolTimeout: 900000,
@@ -45,15 +46,22 @@ async function waitTitle(label) {
   const before = seen.length;
   while (Date.now() - t0 < 700000 && seen.length === before) await sleep(2000);
   const secs = Math.round((Date.now() - t0) / 1000);
-  const marks = log.split('\n').filter(l => l.includes('OPEN')).length;
-  console.log(`${label}: menu in ${secs}s, requests so far ${marks}`);
+  // Ask the server how many files it served rather than counting a local log:
+  // that works against a deployed host too.
+  let marks = -1;
+  try {
+    const r = await fetch(`${BASE}/health`);
+    const j = await r.json();
+    marks = j.served ?? -1;
+  } catch {}
+  console.log(`${label}: menu in ${secs}s, files served so far ${marks}`);
   return marks;
 }
 
-await page.goto(`http://127.0.0.1:${PORT}/?version=1.12.2`, { waitUntil: 'domcontentloaded' });
+await page.goto(`${BASE}/?version=1.12.2`, { waitUntil: 'domcontentloaded' });
 const a = await waitTitle('first load ');
 await page.reload({ waitUntil: 'domcontentloaded' });
 const b = await waitTitle('second load');
 console.log(`requests during the second load: ${b - a}`);
 await browser.close();
-srv.kill();
+if (srv) srv.kill();

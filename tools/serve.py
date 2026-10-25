@@ -75,6 +75,9 @@ def resolve(path):
     return os.path.join(WEB, p)
 
 
+SERVED = {"n": 0, "bytes": 0}
+
+
 class Handler(SimpleHTTPRequestHandler):
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, **MIME}
     protocol_version = "HTTP/1.1"
@@ -209,6 +212,12 @@ class Handler(SimpleHTTPRequestHandler):
             "vanilla": {v: {"clientSha1": p["clientSha1"], "jars": len(p["classpath"]),
                             "assets": p["assetObjects"], "bytes": p["totalJarBytes"],
                             "javaMajor": p["javaMajor"]} for v, p in plans.items()},
+            # How many file reads this process has served. A harness that wants
+            # to know whether a second load actually skipped work asks the
+            # server, rather than counting a log it cannot see on a deployed
+            # host.
+            "served": SERVED["n"],
+            "bytes": SERVED["bytes"],
         }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -226,6 +235,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.missing()
         if self.not_modified(fpath):
             return
+        SERVED["n"] += 1
+        SERVED["bytes"] += os.path.getsize(fpath)
         size = os.path.getsize(fpath)
         start, end, status = 0, size - 1, 200
         rng = self.headers.get("Range")
