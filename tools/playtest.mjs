@@ -316,7 +316,10 @@ print(tot // max(1, n))
       }
       else if (kind === 'waitworld') {
         const want = /Changing view distance to|Preparing spawn area: 100/;
-        const mark = con.length;
+        // If the world already came up before this action ran (the pre-clicks
+        // wait does the same job), waiting for a second occurrence would block
+        // until the timeout and the measurement after it would never happen.
+        const mark = con.some(l => want.test(l)) ? 0 : con.length;
         const w0 = Date.now();
         let hit = null;
         while (Date.now() - w0 < Number(process.env.WORLD_WAIT || 500000) && !hit) {
