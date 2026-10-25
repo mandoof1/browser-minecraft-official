@@ -186,7 +186,12 @@ window.mcBoot = (function () {
     // JVM's own startup reads then queue behind the prefetch. Render fronts this
     // service with HTTP/2, where that limit does not apply, so the boot set is
     // worth shipping and ?warm=0 is there to A/B it.
-    const warm = params.get('warm') || 'bootset';
+    // Measured on the deployed host, title screen reached: with the boot set
+    // preloaded 329 s and 338 s; without it 319 s. The preload is not paying
+    // for itself, and on a free-tier host 1113 speculative requests compete
+    // with the JVM's own reads for the same CPU. So it stays available
+    // (?warm=bootset) but is off by default.
+    const warm = params.get('warm') || 'none';
     if (warm === 'bootset' || warm === 'all') {
       try {
         const r = await fetch('/bootset-' + ver + '.json');
