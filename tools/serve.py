@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, parse_qs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -133,7 +133,37 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             return self.health()
+        if path == "/telemetry":
+            return self.telemetry_read()
         return self.serve_file(resolve(path))
+
+    def telemetry_read(self):
+        """GET /telemetry?last=N - read back what the game reported.
+
+        Without this, measuring a deployed port means driving it from a browser
+        and evaluating inside the page, and CheerpJ runs the JVM on the page's
+        main thread, so that evaluate can block for tens of seconds behind a
+        busy game. A plain GET from outside the browser is both cheaper and more
+        honest about what the page itself measured.
+        """
+        q = parse_qs(urlparse(self.path).query)
+        try:
+            n = max(1, min(50, int((q.get("last") or ["3"])[0])))
+        except ValueError:
+            n = 3
+        try:
+            with open(TELEMETRY, "rb") as f:
+                data = f.read()
+        except OSError:
+            data = b""
+        lines = [l for l in data.split(b"\n") if l.strip()][-n:]
+        out = b"[" + b",".join(lines) + b"]"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
 
     def missing(self):
         """CheerpJ reads this origin as its /app/ filesystem. For a path that is

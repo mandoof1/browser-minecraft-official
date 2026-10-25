@@ -232,11 +232,13 @@ print(tot // max(1, n))
         // Read the number out of the telemetry the page already POSTs rather
         // than evaluating in the page: CheerpJ runs the JVM on the main thread,
         // so page.evaluate behind a busy game can block for tens of seconds.
-        const read = () => {
+        // Going through the server also works against a deployed host, where
+        // there is no local file to read.
+        const read = async () => {
           try {
-            const lines = fs.readFileSync(path.join(ROOT, 'tools', 'telemetry.jsonl'), 'utf8').trim().split('\n').slice(-3);
+            const r = await fetch(`${BASE}/telemetry?last=5`);
             let best = 0;
-            for (const l of lines) { const j = JSON.parse(l); if (j.fps > best) best = j.fps; }
+            for (const j of await r.json()) if (j.fps > best) best = j.fps;
             return best;
           } catch (e) { return 0; }
         };
