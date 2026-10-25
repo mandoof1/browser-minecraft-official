@@ -252,21 +252,38 @@ def ensure_patched_client():
     for ver in sorted(os.listdir(base)):
         src = os.path.join(base, ver, "client.jar")
         out = os.path.join(BUILD, "client-%s-webmc.jar" % ver)
-        if not os.path.isfile(src) or os.path.isfile(out):
+        if not os.path.isfile(src) or (os.path.isfile(out) and os.path.isfile(
+                os.path.join(BUILD, "client-%s-webmc-nocee.jar" % ver))):
             continue
         tmp = os.path.join(BUILD, "client-%s.tmp.jar" % ver)
-        steps = [[src, tmp, "c.class", "a", "(I)I"], [tmp, out, "bvu.class", "b", "(Ljava/util/Map;)V"]]
+        # This is the same chain as tools/patch-client.sh, spelled out here so a
+        # deploy host needs only python3. It used to be a two-step copy of that
+        # script, and the two drifted: Render was serving a jar with the crash
+        # patch but without the Netty and AssetIndex patches, so a generated
+        # world died the moment it finished - "failed to create a child event
+        # loop" - while local runs, which use the shell script, were fine.
+        nocee = os.path.join(BUILD, "client-%s-webmc-nocee.jar" % ver)
+        t2 = os.path.join(BUILD, "client-%s.tmp2.jar" % ver)
+        t3 = os.path.join(BUILD, "client-%s.tmp3.jar" % ver)
+        steps = [
+            ([src, tmp, "c.class", "a", "(I)I"], ["--const0"]),
+            ([tmp, t2, "oz.class", "a", "()Ljava/net/SocketAddress;"], ["--fieldref", "a", "c"]),
+            ([t2, nocee, "bvu.class", "b", "(Ljava/util/Map;)V"], ["--const0"]),
+            ([t2, t3, "cee.class", "b", "(Lnf;)Z"], ["--nonnull", "cee", "a", "(Lnf;)Ljava/io/File;"]),
+            ([t3, out, "bvu.class", "b", "(Ljava/util/Map;)V"], ["--const0"]),
+        ]
         ok = True
-        for args in steps:
+        for args, extra in steps:
             r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "patchclass.py")]
-                               + args + ["--const0"], cwd=ROOT, capture_output=True, text=True)
+                               + args + extra, cwd=ROOT, capture_output=True, text=True)
             if r.returncode != 0:
-                sys.stderr.write("patchclass failed for %s: %s" % (ver, (r.stderr or r.stdout)[:200]))
+                sys.stderr.write("patchclass failed for %s %s: %s" % (ver, args[2], (r.stderr or r.stdout)[:200]))
                 ok = False
         if ok:
             print("[serve] generated %s" % os.path.relpath(out, ROOT), flush=True)
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        for f in (tmp, t2, t3):
+            if os.path.exists(f):
+                os.remove(f)
 
 
 def main():

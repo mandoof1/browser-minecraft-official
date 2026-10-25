@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 
 const BASE = (process.argv[2] || 'https://browser-minecraft-official.onrender.com').replace(/\/$/, '');
 const VER = process.argv[3] || '1.12.2';

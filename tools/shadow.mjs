@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PORT = process.env.PORT || '8890';
 const srv = spawn('python3', ['tools/serve.py'], { env: { ...process.env, PORT } });

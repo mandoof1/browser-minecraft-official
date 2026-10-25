@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const b = await puppeteer.launch({ executablePath: '/usr/bin/brave', headless: true, protocolTimeout: 300000, args: ['--no-sandbox'] });
 const p = await b.newPage();
 const seen = new Set();

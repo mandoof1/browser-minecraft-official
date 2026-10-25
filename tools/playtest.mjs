@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PORT = Number(process.env.PORT || 9210);
 const QS = process.env.QS || 'version=1.12.2';
@@ -51,7 +51,8 @@ try {
   });
   const t0 = Date.now();
   const at = () => Math.round((Date.now() - t0) / 1000);
-  await page.goto(`http://127.0.0.1:${PORT}/?${QS}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  const BASE = process.env.BASE || `http://127.0.0.1:${PORT}`;
+  await page.goto(`${BASE}/?${QS}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
   while (Date.now() - t0 < Number(process.env.WINDOW_WAIT || 120000)) {
     if (await page.evaluate(() => document.querySelectorAll('.cjWindow canvas').length > 0).catch(() => false)) break;

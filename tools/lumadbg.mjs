@@ -4,7 +4,7 @@
 import { createRequire } from 'node:module';
 import { execFileSync, spawn } from 'node:child_process';
 const require = createRequire(import.meta.url);
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PORT = Number(process.env.PORT || 9290);
 const QS = process.env.QS || 'version=1.12.2';
