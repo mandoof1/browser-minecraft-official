@@ -295,6 +295,13 @@ What that changed:
 
 ## Where it stands
 
+**A world is playable on the deployed host.** `evidence/render-in-world.png` and
+`shots/play-05-f3.png` are screenshots of Mojang's own 1.12.2 client rendering a
+generated world - terrain, sky, water, held item, health, hotbar - at
+`https://browser-minecraft-official.onrender.com`. Timings on that host, cold
+cache: Mojang's title screen in ~320 s, a generated world in ~480 s. The client
+keeps a world across reloads in CheerpJ's persistent `/files/minecraft`.
+
 Working, with evidence from the unmodified client's own log:
 
 ```
@@ -339,7 +346,7 @@ java.lang.NullPointerException: Initializing game
     at net.minecraft.client.main.Main.main(Unknown Source)
 ```
 
-Still not working: **nothing is drawn.** The display element stays at
+Still not working at that point in the work: **nothing is drawn.** The display element stays at
 `data-status="Graphics system is initializing"` and no `<canvas>` ever appears
 anywhere in the document, so there are no pixels to compare. That is not the
 client's fault: `probe/webmc/GlProbe2.java` calls `Display.setDisplayMode` and
