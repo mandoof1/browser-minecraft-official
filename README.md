@@ -231,6 +231,59 @@ come back:
 [webmc] maxDirectMemory 67108864 -> 2147483648
 ```
 
+## Performance: measured on the deployed host, not on the dev box
+
+Every number below came from `https://browser-minecraft-official.onrender.com`,
+because that is where the game is played. Local measurements were thrown away:
+the development machine runs other work at 100%+ CPU and it showed up as a
+4-minute swing in boot time.
+
+The metric is Mojang's own. In a loaded world the client prints
+
+```text
+[Server thread/WARN]: Can't keep up! Did the system time change, or is the
+server overloaded? Running 6721ms behind, skipping 134 tick(s)
+```
+
+when the integrated server misses its 50 ms ticks. `tools/playtest.mjs`'s
+`ticks:120000` action counts those lines and sums the skipped ticks over a
+fixed 120 s window. It is the game's number rather than one the harness
+invented, and it costs nothing to read.
+
+Frame counting from JavaScript turned out not to be possible here. CheerpJ
+presents the game through its own display layer, so in a whole session
+`putImageData`/`drawImage` in our realm saw **2** calls and `glFinish`/`glFlush`
+saw **0** - the swap never passes through anything we can wrap. And
+`page.screenshot` behind a busy CheerpJ page blocks for minutes, because the
+JVM runs on the page's main thread. So the tick warnings are the load metric.
+
+| Configuration | Title screen | World loaded | `Can't keep up!` in 120 s | Ticks skipped |
+|---|---|---|---|---|
+| distance 6, 60 fps cap | 329 s | 509 s | 4 | 1449 |
+| distance 4, 30 fps cap | 329 s | 519 s | 1 | 1249 |
+| distance 4, 30 fps, no preload | 319 s | 563 s | 2 | 1113 |
+| distance 4, 30 fps, X11 off | window at 302 s | title not reached in 818 s | - | - |
+
+What that changed:
+
+* **Defaults are now render distance 4 and a 30 fps cap** (`?rd=`, `?fps=`
+  raise them). One thread runs the JVM, so the render loop and the integrated
+  server compete for it, and the server is the part that must hold 20 ticks a
+  second. Four warnings became one.
+* **The recorded boot set is off by default** (`?warm=bootset` keeps it). It
+  did not pay for itself, and 1113 speculative requests compete with the JVM's
+  own reads for CPU on a free-tier host.
+* **X11 stays on.** Disabling it still produces a window, but the client never
+  finishes booting - measured, not guessed.
+* **Realms is answered locally.** `pc.realms.minecraft.net` is cross-origin and
+  the client asks for it over and over, each ask becoming a CORS failure on the
+  main thread. `cjFetch` now returns a 502 for it immediately; the session log
+  went from many CORS errors to none.
+* **Caching is on for bytes that cannot change** (asset objects are named by
+  their own SHA-1, so `immutable`; jars revalidate by ETag). A reload in the
+  same tab reached the menu in 86 s against 116 s for the first load, and the
+  server saw fewer reads.
+
 ## Where it stands
 
 Working, with evidence from the unmodified client's own log:
