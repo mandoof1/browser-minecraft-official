@@ -94,6 +94,53 @@ window.mcBoot = (function () {
     try { return (await fetch(p, { method: 'HEAD' })).ok ? p : null; } catch (e) { return null; }
   }
 
+  /* A progress bar driven by the game's own log, not by guesses.
+   *
+   * There is no loading API in an unmodified client, so the only honest signal
+   * is the lines Mojang has always printed. Each stage below is a line the real
+   * client emits, in the order it emits them; the bar is those lines mapped to
+   * percentages. "Preparing spawn area: NN%" is Mojang's own percentage, so it
+   * drives the last stretch directly. This is the same trick the GTA V browser
+   * port uses against RAGE's log.
+   */
+  const STAGES = [
+    [/Setting user:/, 8, 'Starting the client'],
+    [/LWJGL Version:/, 16, 'Graphics context ready'],
+    [/Sound engine started/, 30, 'Sound system'],
+    [/Reloading ResourceManager: Default/, 40, 'Loading resources'],
+    [/textures-atlas/, 52, 'Building the texture atlas'],
+    [/Starting game/, 60, 'Starting the game'],
+    [/Starting (integrated|local) server/, 68, 'Starting the server'],
+    [/Changing view distance to/, 92, 'Building terrain'],
+  ];
+  const SPAWN = /Preparing spawn area: (\d+)%/;
+
+  function watchProgress() {
+    const bar = $('prog');
+    let lastPct = 0;
+    setInterval(() => {
+      if (!window.mcTelemetry || !bar) return;
+      const tail = mcTelemetry.logTail(300);
+      let pct = lastPct, label = null, newest = '';
+      for (const line of tail) {
+        for (const [re, p, name] of STAGES) {
+          if (re.test(line) && p > pct) { pct = p; label = name; }
+        }
+        const m = SPAWN.exec(line);
+        if (m) { pct = 70 + Math.min(22, Math.round(Number(m[1]) * 0.22)); label = 'Generating world ' + m[1] + '%'; }
+        if (/\[(Client thread|Server thread)\/INFO\]/.test(line)) newest = line.replace(/^\[[\d:]+\]\s*/, '').slice(0, 60);
+      }
+      if (pct === lastPct && !newest) return;
+      lastPct = pct;
+      bar.hidden = false;
+      bar.value = pct;
+      const e = $('stage');
+      if (e && label) e.textContent = label;
+      const s = $('stats');
+      if (s) s.textContent = newest;
+    }, 1500);
+  }
+
   async function main() {
     const ver = params.get('version') || '1.12.2';
     setVer(ver);
@@ -104,6 +151,7 @@ window.mcBoot = (function () {
     if (params.get('log') === '1') document.body.classList.add('showlog');
 
     phase('plan');
+    watchProgress();
     try {
       const r = await fetch('/data/vanilla/' + ver + '/plan.json');
       if (!r.ok) throw new Error('no plan for ' + ver + ' (run: python3 tools/get-vanilla.py ' + ver + ')');
@@ -120,36 +168,38 @@ window.mcBoot = (function () {
     if (typeof cheerpjInit !== 'function') throw new Error('CheerpJ loader did not expose cheerpjInit');
 
     const javaMajor = params.get('java') || (Number(plan.javaMajor) >= 17 ? 17 : 8);
-    // ?warm=1 hands CheerpJ the whole asset tree up front. The client reads
-    // ~1070 asset objects during startup, one serial fetch each; the preload
-    // table is keyed by virtual path with 128 KiB block offsets as values, so
-    // the same bytes arrive as parallel fetches instead.
     let preloads = self.CJ_PRELOAD_RESOURCES;
-    // ?warm=jars preloads only the classpath: the jars are read as large serial
-    // range requests, so turning those into parallel fetches is the part of the
-    // preload that actually pays. Asset objects are small and numerous, and
-    // timing showed their cost is CheerpJ's per-file filesystem overhead rather
-    // than the fetch, so preloading all 1305 of them changes little.
-    // Measured: preloading the classpath makes the boot *slower*, not faster.
-    // This origin is HTTP/1.1, so the browser allows six connections at a time,
-    // and 70 preload entries expand to hundreds of range requests that the
-    // JVM's own startup reads then queue behind. ?warm=jars keeps it available
-    // for experiments; the default is to preload only CheerpJ's runtime.
-    const warm = params.get('warm') || 'none';
-    if (warm !== '0' && warm !== 'assets') {
-      const blocks = (size) => {
-        const out = [];
-        for (let o = 0; o < Math.max(1, size | 0); o += 131072) out.push(o);
-        return out;
-      };
+    const blocks = (size) => {
+      const out = [];
+      for (let o = 0; o < Math.max(1, size | 0); o += 131072) out.push(o);
+      return out;
+    };
+    // ?warm=bootset (the default) replays a real boot instead of guessing.
+    // data/vanilla/<ver>/bootset.json is generated from the access log of a
+    // session that actually ran: it maps each virtual path to the exact block
+    // offsets the client asked for. Prefetching those turns ~1200 serial reads
+    // into parallel fetches without asking for a single byte the game did not
+    // want. Same shape as the GTA V browser port's data/bootset.json.
+    //
+    // Measured on this origin: preloading over HTTP/1.1 makes the boot *slower*,
+    // because the browser gives a single HTTP/1.1 origin six connections and the
+    // JVM's own startup reads then queue behind the prefetch. Render fronts this
+    // service with HTTP/2, where that limit does not apply, so the boot set is
+    // worth shipping and ?warm=0 is there to A/B it.
+    const warm = params.get('warm') || 'bootset';
+    if (warm === 'bootset' || warm === 'all') {
+      try {
+        const r = await fetch('/bootset-' + ver + '.json');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const bs = await r.json();
+        preloads = Object.assign({}, preloads, bs);
+        phase('warm', Object.keys(bs).length + ' files from the recorded boot');
+      } catch (e) {
+        console.log('[boot] no bootset for ' + ver + ' (' + e.message + ') - run tools/make-bootset.py');
+      }
+    }
+    if (warm === 'jars') {
       const sizes = plan.jarSizes || {};
-      const sizeOf = async (path, known) => {
-        if (known) return known;
-        try {
-          const r = await fetch(path, { method: 'HEAD' });
-          return Number(r.headers.get('content-length') || 0);
-        } catch (e) { return 0; }
-      };
       for (const entry of plan.classpath) {
         const name = entry.split('/').pop();
         if (/^lwjgl(_util)?-/.test(name)) continue;
@@ -161,7 +211,7 @@ window.mcBoot = (function () {
       if (patched) { preloads = Object.assign({}, preloads); preloads[patched] = blocks(sizes['client.jar'] || 0); }
       for (const extra of ['/app/lwjgl-2.9.3-webmc.jar', '/app/lwjgl/lwjgl_util-2.9.3.jar',
                           '/app/lwjgl/libraries/gl4es.wasm']) {
-        preloads[extra] = blocks(await sizeOf(extra, 0));
+        preloads[extra] = blocks(sizes['lwjgl'] || 0);
       }
       phase('warm', Object.keys(preloads).length + ' files preloaded');
     }
@@ -179,7 +229,25 @@ window.mcBoot = (function () {
       }
       phase('warm', Object.keys(preloads).length + ' files preloaded');
     }
+    // A free-tier host answers 503 while it spins up, and a single failed range
+    // read inside CheerpJ's filesystem is a stalled JVM with no error anywhere.
+    // Retry with a jittered, doubling wait instead: the same shape the GTA V
+    // browser port uses against an overloaded host.
+    const cjFetch = async (...a) => {
+      let last;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        try {
+          const r = await fetch(...a);
+          if (r.ok || r.status === 204 || r.status === 304) return r;
+          last = new Error('HTTP ' + r.status);
+        } catch (e) { last = e; }
+        if (attempt === 5) throw last;
+        await new Promise(res => setTimeout(res, Math.min(5000, 300 * 2 ** attempt) * (0.5 + Math.random())));
+      }
+      throw last;
+    };
     await cheerpjInit({
+      fetch: cjFetch,
       version: javaMajor,
       javaProperties: [
         'java.library.path=/app/lwjgl/libraries/',
