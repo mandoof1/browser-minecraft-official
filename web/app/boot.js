@@ -240,6 +240,13 @@ window.mcBoot = (function () {
       // for the paths that cannot change, and leave the rest to revalidate by
       // ETag.
       const url = typeof input === 'string' ? input : (input && input.url) || '';
+      // Realms is a menu feature this port does not serve, and the client asks
+      // for it over and over: pc.realms.minecraft.net is cross-origin, so every
+      // ask becomes a CORS failure on the main thread, where the JVM also lives.
+      // Answer it locally and immediately instead.
+      if (/realms\.minecraft\.net/.test(url)) {
+        return new Response('', { status: 502, statusText: 'realms not served here' });
+      }
       init = Object.assign({}, init || {});
       if (/\/assets\/objects\/|[?&]v=/.test(url)) init.cache = 'force-cache';
       else if (/\.jar$|\.wasm$|\/indexes\//.test(url)) init.cache = 'default';

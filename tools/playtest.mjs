@@ -226,6 +226,27 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'ticks') {
+        // The game's own report of a starved loop. Mojang prints
+        //   Can't keep up! ... Running Nms behind, skipping M tick(s)
+        // when the integrated server cannot get its 50 ms ticks, which on a
+        // single-threaded WebAssembly JVM means the render loop is eating the
+        // thread. Counting those over a fixed window is cheap (no screenshots,
+        // no page.evaluate behind a busy main thread) and it is the game's own
+        // number, not a proxy invented by the harness.
+        const ms = Number(arg) || 30000;
+        const mark = con.length;
+        const t0 = Date.now();
+        while (Date.now() - t0 < ms) await sleep(2000);
+        let warns = 0, skipped = 0, worst = 0;
+        for (const l of con.slice(mark)) {
+          const m = /Running (\d+)ms behind, skipping (\d+) tick/.exec(l);
+          if (!m) continue;
+          warns++; skipped += Number(m[2]); worst = Math.max(worst, Number(m[1]));
+        }
+        console.log(`t+${at()}s ticks over ${(Date.now() - t0) / 1000}s: ${warns} 'cant keep up'`
+          + `, ${skipped} ticks skipped, worst ${worst}ms behind`);
+      }
       else if (kind === 'frames') {
         // Frames per second measured from outside the page. CheerpJ presents the
         // game inside its own display layer, so neither putImageData nor
