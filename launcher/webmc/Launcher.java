@@ -74,9 +74,16 @@ public final class Launcher {
 		// thread never has to be the one that loads it.
 		try {
 			Class<?> dbi = Class.forName("java.awt.image.DataBufferInt");
-			Object raster = new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-					.getRaster().getDataBuffer();
-			System.out.println("[webmc] pre-loaded " + dbi.getName() + " raster=" + raster.getClass().getName());
+			java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(2, 2,
+					java.awt.image.BufferedImage.TYPE_INT_ARGB);
+			Object raster = img.getRaster().getDataBuffer();
+			// getGraphics() is the call that needs sun.awt.image.BufImgSurfaceManager,
+			// and that is the class the game then dies on: pre-loading DataBufferInt
+			// alone just moved the failure one step further along the same path.
+			Object g = img.getGraphics();
+			img.createGraphics().dispose();
+			System.out.println("[webmc] pre-loaded " + dbi.getName() + " raster=" + raster.getClass().getName()
+					+ " graphics=" + g.getClass().getName());
 		} catch (Throwable t) {
 			System.out.println("[webmc] could not pre-load AWT image path: " + t);
 		}
