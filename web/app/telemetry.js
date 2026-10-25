@@ -57,6 +57,8 @@ window.mcTelemetry = (function () {
         frames,
         fps: fps(),
         paints,
+        glFinish,
+        glFlush,
         changing,
         posted
       })
@@ -69,7 +71,7 @@ window.mcTelemetry = (function () {
    * CheerpJ paints a Java canvas into the DOM with putImageData (and
    * createImageBitmap), so counting those calls on the game canvas is counting
    * the frames the game actually presented. */
-  let paints = 0, paintSamples = [];
+  let paints = 0, paintSamples = [], glSamples = [];
   // A DOM query per call would be silly: this wraps every pixel blit the page
   // makes. Resolve each canvas once and remember it.
   const canvasIsGame = new WeakMap();
@@ -92,16 +94,42 @@ window.mcTelemetry = (function () {
       };
     }
   }
+
+  /* Measured: the 2D blit counter sees two calls in a whole session. The game
+   * canvas is not painted with putImageData - gl4es draws straight into a
+   * WebGL context - so the frame boundary has to come from the GL side: the
+   * swap is a finish, and Mojang also flushes mid-frame. */
+  let glFinish = 0, glFlush = 0;
+  for (const proto of [typeof WebGLRenderingContext !== 'undefined' ? WebGLRenderingContext.prototype : null,
+                      typeof WebGL2RenderingContext !== 'undefined' ? WebGL2RenderingContext.prototype : null].filter(Boolean)) {
+    for (const [name, sink] of [['finish', () => glFinish++], ['flush', () => glFlush++]]) {
+      const orig = proto[name];
+      if (!orig) continue;
+      proto[name] = function (...args) {
+        sink();
+        return orig.apply(this, args);
+      };
+    }
+  }
   setInterval(() => {
     paintSamples.push(paints);
+    glSamples.push([glFinish, glFlush]);
     if (paintSamples.length > 10) paintSamples.shift();
+    if (glSamples.length > 10) glSamples.shift();
   }, 1000);
 
-  // frames presented per second over the last few seconds
+  // frames presented per second over the last few seconds. Prefer the finish
+  // count (one per swap); fall back to flush when the runtime never calls it.
   function fps() {
     if (paintSamples.length < 2) return 0;
     const dt = paintSamples.length - 1;
-    return Math.round(((paintSamples[dt] - paintSamples[0]) / dt) * 10) / 10;
+    const blits = (paintSamples[dt] - paintSamples[0]) / dt;
+    let f = 0, l = 0;
+    for (const s of glSamples) { f += s[0]; l += s[1]; }
+    const fin = (glSamples[glSamples.length - 1][0] - glSamples[0][0]) / dt;
+    const fl = (glSamples[glSamples.length - 1][1] - glSamples[0][1]) / dt;
+    const cand = fin > 0.5 ? fin : fl;
+    return Math.round(Math.max(blits, cand) * 10) / 10;
   }
 
   /* is the canvas actually producing new content? for a vanilla client this is
