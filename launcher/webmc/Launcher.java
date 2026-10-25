@@ -180,17 +180,20 @@ public final class Launcher {
 		Thread t = new Thread(new Runnable() {
 			public void run() {
 				long seen = 0L;
-				while (true) {
-					try {
-						File[] found = reports.listFiles();
-						if (found == null) {
-							// CheerpJ's filesystem is asynchronous; say so once, in the
-							// log, rather than swallowing it forever.
-							System.out.println("[webmc] crash-watch: " + reports + " exists="
-									+ reports.exists() + " isDirectory=" + reports.isDirectory()
-									+ " parent=" + new File(reports.getPath()).getParentFile().list().length);
-						}
-						if (found != null) {
+					int quieted = 0;
+					while (true) {
+						try {
+							File[] found = reports.listFiles();
+							if (found == null && quieted < 2) {
+								// A directory that does not exist yet is the normal state at
+								// boot. Say so twice and stop: this thread shares the same
+								// asynchronous filesystem the client is booting from, and a
+								// chatty poller is not free.
+								quieted++;
+								System.out.println("[webmc] crash-watch: " + reports + " exists="
+										+ reports.exists() + " isDirectory=" + reports.isDirectory());
+							}
+if (found != null) {
 							for (int i = 0; i < found.length; i++) {
 								if (found[i].lastModified() > seen) {
 									seen = found[i].lastModified();
@@ -202,7 +205,7 @@ public final class Launcher {
 						// the filesystem is asynchronous; a failed listing is not fatal
 					}
 					try {
-						Thread.sleep(5000);
+						Thread.sleep(15000);
 					} catch (InterruptedException e) {
 						return;
 					}
