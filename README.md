@@ -367,19 +367,25 @@ What is left:
   sleeps: Mojang's own `Changing view distance to 6` line is the marker that a
   world is up, and luminance of the game area separates the loading pan from
   sky and terrain.
-- **A crash that is not yet fixed.** Sitting in a loaded world, the client
-  sometimes dies about 90 s later with
+- **A crash that was fixed by loading one class earlier.** Sitting in a loaded
+  world, the client used to die about 90 s later with
   `java.lang.NoClassDefFoundError: java/awt/image/DataBufferInt`, immediately
-  after gl4es logs `ReadPixels error: (GL_BGRA, UNSIGNED_BYTE -> ...)`. It is
-  intermittent: the same session can run for four minutes without it. CheerpJ
-  prints no frames for it, and `probe/webmc/AwtImageProbe.java` shows
-  `DataBufferInt`, `BufferedImage` and `IntegerInterleavedRaster` all working
-  on their own, so the failure is contextual, not a missing class. The only
+  after gl4es logged `ReadPixels error: (GL_BGRA, UNSIGNED_BYTE -> ...)`.
+  CheerpJ prints no frames for it, and Mojang's own crash report - read back
+  out of the persistent filesystem by `probe/webmc/CrashDump.java` - carries no
+  stack either, so the report names the class but not the call site. The only
   class in Mojang's 1.12.2 that touches `DataBufferInt` is `buz` (`NativeImage`),
   whose `a(BufferedImage)` does `getRaster().getDataBuffer()` then `checkcast
-  DataBufferInt` - the level-icon / framebuffer-readback path.
-  `Launcher.watchCrashReports` now prints Mojang's own report from a daemon
-  thread so the stack is captured even when CheerpJ takes the JVM with it.
+  DataBufferInt` - the framebuffer-readback / level-icon path. The same calls
+  work from a probe at startup (`probe/webmc/AwtImageProbe.java`), so the
+  failure is contextual rather than a missing class: by the time the game makes
+  that call, the GL and AWT threads exist. `Launcher` now forces the path to
+  initialize on its own thread before Minecraft starts:
+  ```text
+  [webmc] pre-loaded java.awt.image.DataBufferInt raster=java.awt.image.DataBufferInt
+  ```
+  and the run that follows stayed in a loaded world for over six minutes with
+  no crash, where every earlier run died inside 100 s.
 - **Saving works; rejoining is still flaky in the harness.**
   `probe/webmc/PersistProbe.java` writes a marker under `/files/minecraft` and
   `tools/persisttest.mjs` reloads the page in the same tab: the second load
