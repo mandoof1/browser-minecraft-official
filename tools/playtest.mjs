@@ -11,10 +11,12 @@
 // canvas is the framebuffer, so canvas pixels are GUI pixels.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const puppeteer = require('puppeteer-core');
+const ROOT = path.resolve(import.meta.dirname, '..');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PORT = Number(process.env.PORT || 9210);
 const QS = process.env.QS || 'version=1.12.2';
@@ -224,6 +226,27 @@ print(tot // max(1, n))
       else if (kind === 'key') { console.log(`t+${at()}s key ${arg}`); await doKey(arg); }
       else if (kind === 'look') { const [dx, dy] = arg.split(','); console.log(`t+${at()}s look ${arg}`); await doLook(dx, dy); }
       else if (kind === 'sleep') { console.log(`t+${at()}s sleep ${arg}ms`); await sleep(Number(arg)); }
+      else if (kind === 'fps') {
+        // Frames the game actually presented per second, sampled over arg ms.
+        const ms = Number(arg) || 10000;
+        // Read the number out of the telemetry the page already POSTs rather
+        // than evaluating in the page: CheerpJ runs the JVM on the main thread,
+        // so page.evaluate behind a busy game can block for tens of seconds.
+        const read = () => {
+          try {
+            const lines = fs.readFileSync(path.join(ROOT, 'tools', 'telemetry.jsonl'), 'utf8').trim().split('\n').slice(-3);
+            let best = 0;
+            for (const l of lines) { const j = JSON.parse(l); if (j.fps > best) best = j.fps; }
+            return best;
+          } catch (e) { return 0; }
+        };
+        const vals = [];
+        const f0 = Date.now();
+        while (Date.now() - f0 < ms) { await sleep(2000); vals.push(await read()); }
+        const good = vals.filter(v => v > 0);
+        const avg = good.length ? Math.round(good.reduce((a, b) => a + b, 0) / good.length * 10) / 10 : 0;
+        console.log(`t+${at()}s fps over ${ms}ms: avg ${avg} samples ${good.join(',')}`);
+      }
       else if (kind === 'reload') {
         // The question a player actually asks: press F5, is the world still
         // there? Same tab, same origin, so CheerpJ's IndexedDB-backed /files/

@@ -97,6 +97,38 @@ class Handler(SimpleHTTPRequestHandler):
         self.isolation_headers()
         super().end_headers()
 
+    def etag(self, f):
+        st = os.stat(f)
+        return '"%s-%x-%x"' % (os.path.basename(f)[:24], int(st.st_mtime), st.st_size)
+
+    def cache_headers(self, f):
+        """CheerpJ pulls this origin as a filesystem: ~1200 asset objects and a
+        dozen jar ranges per boot. With no validators at all every one of those
+        is refetched on every load, so a second visit costs the same as the
+        first. Asset objects are named by their own SHA-1, so they never change
+        and can be cached forever; jars and indexes get an ETag instead, because
+        our patched jar is regenerated and must not go stale."""
+        p = urlparse(self.path).path
+        if "/assets/objects/" in p:
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        elif p.startswith("/data/vanilla/") or p.endswith((".jar", ".wasm", ".json")):
+            self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+        else:
+            self.send_header("Cache-Control", "no-cache")
+        self.send_header("ETag", self.etag(f))
+
+    def not_modified(self, f):
+        """Only for whole-file reads: a 304 in the middle of a range exchange is
+        something CheerpJ's filesystem has no answer for."""
+        if self.headers.get("Range"):
+            return False
+        if self.headers.get("If-None-Match") != self.etag(f):
+            return False
+        self.send_response(304)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
@@ -120,6 +152,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.missing()
         self.send_response(200)
         self.send_header("Content-Type", MIME.get(os.path.splitext(f)[1], "application/octet-stream"))
+        self.cache_headers(f)
         self.send_header("Content-Length", str(os.path.getsize(f)))
         self.send_header("Accept-Ranges", "bytes")
         self.end_headers()
@@ -161,6 +194,8 @@ class Handler(SimpleHTTPRequestHandler):
         sys.stderr.flush()
         if not os.path.isfile(fpath):
             return self.missing()
+        if self.not_modified(fpath):
+            return
         size = os.path.getsize(fpath)
         start, end, status = 0, size - 1, 200
         rng = self.headers.get("Range")
@@ -193,9 +228,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(end - start + 1))
         if rng:
             self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
-        # Mojang's files are content-addressed, so they never need revalidating
-        if "/objects/" in fpath or "/vanilla/" in fpath:
-            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        # Mojang's asset objects are named by their own SHA-1, so they never
+        # change; everything else gets an ETag so an unchanged file costs a
+        # 304 instead of another full fetch.
+        self.cache_headers(fpath)
         self.end_headers()
         with open(fpath, "rb") as f:
             f.seek(start)

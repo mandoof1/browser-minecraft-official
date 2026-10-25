@@ -125,7 +125,42 @@ window.mcBoot = (function () {
     // table is keyed by virtual path with 128 KiB block offsets as values, so
     // the same bytes arrive as parallel fetches instead.
     let preloads = self.CJ_PRELOAD_RESOURCES;
-    if (params.get('warm') === '1') {
+    // ?warm=jars preloads only the classpath: the jars are read as large serial
+    // range requests, so turning those into parallel fetches is the part of the
+    // preload that actually pays. Asset objects are small and numerous, and
+    // timing showed their cost is CheerpJ's per-file filesystem overhead rather
+    // than the fetch, so preloading all 1305 of them changes little.
+    const warm = params.get('warm') || 'jars';
+    if (warm !== '0' && warm !== 'assets') {
+      const blocks = (size) => {
+        const out = [];
+        for (let o = 0; o < Math.max(1, size | 0); o += 131072) out.push(o);
+        return out;
+      };
+      const sizes = plan.jarSizes || {};
+      const sizeOf = async (path, known) => {
+        if (known) return known;
+        try {
+          const r = await fetch(path, { method: 'HEAD' });
+          return Number(r.headers.get('content-length') || 0);
+        } catch (e) { return 0; }
+      };
+      for (const entry of plan.classpath) {
+        const name = entry.split('/').pop();
+        if (/^lwjgl(_util)?-/.test(name)) continue;
+        const path = entry === 'mc-launcher.jar' ? '/app/mc-launcher.jar' : '/app/data/vanilla/' + ver + '/' + entry;
+        preloads = Object.assign({}, preloads);
+        preloads[path] = blocks(sizes[entry] || 0);
+      }
+      const patched = await crashfixJar(ver);
+      if (patched) { preloads = Object.assign({}, preloads); preloads[patched] = blocks(sizes['client.jar'] || 0); }
+      for (const extra of ['/app/lwjgl-2.9.3-webmc.jar', '/app/lwjgl/lwjgl_util-2.9.3.jar',
+                          '/app/lwjgl/libraries/gl4es.wasm']) {
+        preloads[extra] = blocks(await sizeOf(extra, 0));
+      }
+      phase('warm', Object.keys(preloads).length + ' files preloaded');
+    }
+    if (warm === 'assets' || warm === 'all') {
       const idx = await (await fetch(`/data/vanilla/${ver}/assets/indexes/${plan.assetIndex}.json`)).json();
       preloads = Object.assign({}, preloads);
       const blocks = (size) => {
@@ -156,12 +191,18 @@ window.mcBoot = (function () {
         'webmc.variant=' + (params.get('variant') || 'minimal'),
         'webmc.warm=' + (params.get('warm') === '1' ? '1' : '0'),
         'webmc.useVbo=' + (params.get('vbo') === '0' ? 'false' : 'true'),
+        'webmc.rd=' + (params.get('rd') || '6'),
+        'webmc.maxFps=' + (params.get('fps') || '60'),
+        'webmc.fbo=' + (params.get('fbo') === '1' ? 'true' : 'false'),
         'mc.version=' + ver
       ],
       libraries: {
         'libGL.so.1': '/app/lwjgl/libraries/gl4es.wasm'
       },
       enableX11: params.get('x11') !== '0',
+      // CheerpJ's own splash/status overlay sits on top of the game window. For
+      // a page whose whole job is running Minecraft, it is noise.
+      status: params.get('cjstatus') === '1' ? undefined : 'none',
       // Leaning Technologies' own Minecraft demo preloads these ranges of its
       // runtime before starting. Without them the JVM pulls rt.jar, the
       // meta-index files, cheerpj-awt.jar and libEGL/libGLESv2 one small read

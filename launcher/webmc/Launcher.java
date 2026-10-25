@@ -149,21 +149,33 @@ public final class Launcher {
 		String[] lines = new String[] {
 			// keys are exactly as Mojang's own GameSettings parses them
 			"lang:en_us",
-			"fboEnable:false",
+			// Mojang picks its framebuffer path from this. With it off the client
+			// renders through the legacy path and reads back with glReadPixels;
+			// with it on it uses GL framebuffers. FBOs used to hang CheerpJ (the
+			// APIUtil scratch-buffer bug, fixed in lwjglfix/), so this is now
+			// switchable for A/B runs: ?fbo=1 turns it on.
+			"fboEnable:" + System.getProperty("webmc.fbo", "false"),
 			// Mojang's own default is VBOs on. CheerpJ/gl4es still has to survive
 			// glGenBuffers, so this stays switchable for A/B runs (?vbo=0).
 			"useVbo:" + System.getProperty("webmc.useVbo", "true"),
 			"fancyGraphics:false",
 			"ao:false",
 			"particles:0",
-			"renderDistance:6",
+			// Render distance is the single biggest lever on both startup and
+			// frame rate here: the client builds and uploads geometry for every
+			// chunk in view, and at 6 that is 121 chunks interpreted in a
+			// WebAssembly JVM. ?rd=4 makes it 81.
+			"renderDistance:" + System.getProperty("webmc.rd", "6"),
 			"renderClouds:false",
+			// Mipmapping costs texture-filtering work per fragment and, at the
+			// resolutions this runs at, buys nothing.
+			"mipmapLevels:0",
 			"enableVsync:false",
 			"fullscreen:false",
 			"guiScale:2",
 			"fov:0.75",
 			"gamma:1.0",
-			"maxFps:60",
+			"maxFps:" + System.getProperty("webmc.maxFps", "60"),
 			"mouseSensitivity:0.5",
 			"snooperEnabled:false",
 		};

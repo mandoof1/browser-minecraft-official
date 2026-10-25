@@ -174,6 +174,9 @@ def main():
         "assetObjects": len(objects),
         "assetBytes": total,
         "totalJarBytes": sum(c[1] for c in classpath) + dl["size"],
+        # Per-entry sizes, so the browser can hand CheerpJ a preload table
+        # (path -> block offsets) without asking the server how big each jar is.
+        "jarSizes": dict([(c[0], c[1]) for c in classpath] + [("client.jar", dl["size"])]),
     }
     json.dump(plan, open(os.path.join(out, "plan.json"), "w"), indent=1)
     print("plan.json written: %d classpath entries, %.1f MiB of jars"

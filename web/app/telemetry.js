@@ -55,12 +55,49 @@ window.mcTelemetry = (function () {
         logTail: log.slice(-40),
         canvas: canvasSeen,
         frames,
+        fps: fps(),
+        paints,
         changing,
         posted
       })
     }).then(r => { if (!r.ok) failed++; posted++; }, () => { failed++; });
   }
   setInterval(flush, 10000);
+
+  /* A real frame counter. The 1 Hz canvas sampler below can only say "the
+   * pixels differ from last second", which is useless for measuring frame rate.
+   * CheerpJ paints a Java canvas into the DOM with putImageData (and
+   * createImageBitmap), so counting those calls on the game canvas is counting
+   * the frames the game actually presented. */
+  let paints = 0, paintSamples = [];
+  const isGameCanvas = (c) => {
+    if (!c || c.id !== 'cjCanvas' && !(c.className || '').toString().match(/cjSwapped|cjCanvas/)) {
+      return !!(c.closest && c.closest('#game'));
+    }
+    return true;
+  };
+  for (const proto of [CanvasRenderingContext2D.prototype, OffscreenCanvasRenderingContext2D && OffscreenCanvasRenderingContext2D.prototype].filter(Boolean)) {
+    for (const name of ['putImageData', 'drawImage']) {
+      const orig = proto[name];
+      if (!orig) continue;
+      proto[name] = function (...args) {
+        const target = name === 'drawImage' ? this.canvas : null;
+        if (target === null || isGameCanvas(target)) paints++;
+        return orig.apply(this, args);
+      };
+    }
+  }
+  setInterval(() => {
+    paintSamples.push(paints);
+    if (paintSamples.length > 10) paintSamples.shift();
+  }, 1000);
+
+  // frames presented per second over the last few seconds
+  function fps() {
+    if (paintSamples.length < 2) return 0;
+    const dt = paintSamples.length - 1;
+    return Math.round(((paintSamples[dt] - paintSamples[0]) / dt) * 10) / 10;
+  }
 
   /* is the canvas actually producing new content? for a vanilla client this is
    * the only signal that the render loop is alive */
@@ -104,6 +141,8 @@ window.mcTelemetry = (function () {
     }),
     canvas: () => canvasSeen,
     frames: () => frames,
+    fps,
+    paints: () => paints,
     changing: () => changing,
     flush
   };
